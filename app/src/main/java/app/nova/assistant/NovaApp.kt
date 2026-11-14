@@ -42,6 +42,8 @@ class NovaApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // The on-device model runs in its own ":llm" process; it needs none of the assistant machinery.
+        if (processName().endsWith(":llm")) return
         settings = Settings(this)
         memory = MemoryStore(this)
         vosk = VoskModelManager(this)
@@ -59,6 +61,10 @@ class NovaApp : Application() {
         home.refreshInBackground()
         AppLog.d("app", "Nova started (backend=${settings[K.llmBackend]})")
     }
+
+    private fun processName(): String =
+        if (android.os.Build.VERSION.SDK_INT >= 28) getProcessName()
+        else runCatching { java.io.File("/proc/self/cmdline").readText().trim('\u0000', ' ') }.getOrDefault(packageName)
 
     companion object {
         lateinit var instance: NovaApp

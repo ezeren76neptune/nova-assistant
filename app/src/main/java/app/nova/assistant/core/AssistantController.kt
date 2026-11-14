@@ -62,6 +62,8 @@ class AssistantController(private val app: NovaApp) {
     fun onWakeWord(trailing: String?) {
         scope.launch {
             if (_state.value.phase == Phase.LISTENING) return@launch
+            // a stray wake word (TV, other people) must not throw away a request that's being answered
+            if (_state.value.phase == Phase.THINKING) { AppLog.d("ctl", "wake word ignored while thinking"); return@launch }
             app.audio.wakeCue()
             // warm the model up while the user is still talking
             if (s[K.preloadOnWake]) app.llm.preloadInBackground()

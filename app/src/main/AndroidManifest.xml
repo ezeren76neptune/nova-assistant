@@ -144,6 +144,12 @@
             android:taskAffinity=""
             android:theme="@style/Theme.Nova.Translucent" />
 
+        <!-- The on-device AI model runs in its own process: if the OS kills it for memory, Nova keeps listening -->
+        <service
+            android:name=".llm.LlmService"
+            android:exported="false"
+            android:process=":llm" />
+
         <service
             android:name=".service.ListenerService"
             android:exported="false"

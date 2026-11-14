@@ -37,8 +37,15 @@ class LlmManager(private val app: NovaApp) {
 
     private val dispatcher = Executors.newSingleThreadExecutor { r -> Thread(r, "nova-llm") }.asCoroutineDispatcher()
     private val mutex = Mutex()
+    /** In-process engine — only the remote (server) backend, which needs almost no memory. */
     @Volatile private var engine: LlmEngine? = null
     @Volatile private var engineKey: String? = null
+    /** On-device models live in the separate `:llm` process (see [LlmService]). */
+    private val local = LocalLlmClient(app) {
+        // the model process was killed (e.g. OnePlus memory manager) — the next request reloads it
+        _status.value = if (isConfigured()) Status.Idle else Status.None
+    }
+    private fun isLocal(cfg: LlmConfig) = cfg.backend != "remote"
     private var unloadJob: Job? = null
     private val s get() = app.settings
 
@@ -87,10 +94,14 @@ class LlmManager(private val app: NovaApp) {
         else -> s[K.modelPath].let { it.isNotBlank() && File(it).exists() }
     }
 
-    fun isReady(): Boolean = engine != null && engineKey == config().engineKey()
+    fun isReady(): Boolean {
+        val cfg = config()
+        return if (isLocal(cfg)) local.loadedKey == cfg.loadKey else engine != null && engineKey == cfg.engineKey()
+    }
 
     fun describe(): String {
         engine?.let { if (engineKey == config().engineKey()) return it.info }
+        local.info?.let { if (local.loadedKey == config().loadKey) return it.substringBefore(" · loaded in") }
         return when (s[K.llmBackend]) {
             "none" -> "No AI model (quick commands only)"
             "remote" -> "${s[K.remoteModel]} · server ${s[K.remoteUrl]}"
@@ -120,12 +131,35 @@ class LlmManager(private val app: NovaApp) {
     }
 
     suspend fun ensureLoaded() {
-        mutex.withLock { ensureLocked() }
+        mutex.withLock {
+            val cfg = config()
+            if (isLocal(cfg)) ensureLocalLocked(cfg) else ensureLocked()
+        }
+    }
+
+    /** Loads the configured model (in the `:llm` process for on-device models). */
+    private suspend fun ensureLocalLocked(cfg: LlmConfig) {
+        if (local.loadedKey == cfg.loadKey) return
+        AppLog.d("llm", "model not loaded in the model process — loading")
+        closeEngineLocked() // switching away from a server backend
+        if (!isConfigured()) { _status.value = Status.None; error("Choose or download a model file in AI model settings.") }
+        _status.value = Status.Loading
+        AppLog.d("llm", "loading ${cfg.backend} in the model process: ${cfg.path} (gpu=${cfg.gpu}, ctx=${cfg.context})")
+        try {
+            val info = local.load(cfg)
+            _status.value = Status.Ready(info)
+        } catch (t: Throwable) {
+            if (t is CancellationException) throw t
+            val msg = t.message ?: t.javaClass.simpleName
+            _status.value = Status.Failed(msg)
+            throw IllegalStateException(msg, t)
+        }
     }
 
     private suspend fun ensureLocked(): LlmEngine {
         val cfg = config()
         val key = cfg.engineKey()
+        local.shutdown() // a server backend doesn't need the model process
         engine?.let {
             if (engineKey == key) {
                 it.updateConfig(cfg)
@@ -172,6 +206,29 @@ class LlmManager(private val app: NovaApp) {
     /** [messages] must end with the new user message. Returns the raw model text. */
     suspend fun generate(key: String, system: String, messages: List<ChatMsg>, onPartial: (String) -> Unit): String =
         mutex.withLock {
+            val cfg = config()
+            if (isLocal(cfg)) {
+                cancelUnload()
+                try {
+                    // if Android kills the model process mid-request, reload it once and retry
+                    for (attempt in 1..2) {
+                        try {
+                            ensureLocalLocked(cfg)
+                            if (_status.value !is Status.Ready) _status.value = Status.Ready(local.info ?: describe())
+                            val t0 = SystemClock.elapsedRealtime()
+                            return@withLock local.generate(cfg, key, system, messages, onPartial).also {
+                                AppLog.d("llm", "generated ${it.length} chars in ${SystemClock.elapsedRealtime() - t0} ms: ${it.take(160)}")
+                            }
+                        } catch (d: LocalLlmClient.ProcessDied) {
+                            AppLog.d("llm", "model process died during request (attempt $attempt) — ${if (attempt == 1) "reloading and retrying" else "giving up"}")
+                            if (attempt == 2) throw IllegalStateException("Android stopped the AI model (low memory). Try again.")
+                        }
+                    }
+                    error("unreachable")
+                } finally {
+                    scheduleUnload()
+                }
+            }
             val e = ensureLocked()
             cancelUnload()
             val t0 = SystemClock.elapsedRealtime()
@@ -200,18 +257,27 @@ class LlmManager(private val app: NovaApp) {
 
     fun cancel() {
         engine?.let { runCatching { it.cancel() } }
+        local.cancel()
     }
 
     fun unload() {
         cancelUnload()
         app.appScope.launch {
             mutex.withLock {
-                closeEngineLocked()
+                unloadAllLocked()
                 refreshIdleStatus()
             }
         }
     }
 
+    /** Unload everything: end the model process and close any server engine. */
+    private suspend fun unloadAllLocked() {
+        if (local.loadedKey != null) AppLog.d("llm", "ending the model process")
+        local.shutdown()
+        closeEngineLocked()
+    }
+
+    /** Closes the in-process (server) engine only. */
     private suspend fun closeEngineLocked() {
         val e = engine ?: return
         engine = null
@@ -221,10 +287,18 @@ class LlmManager(private val app: NovaApp) {
     }
 
     private fun refreshIdleStatus() {
-        if (engine == null) _status.value = if (isConfigured()) Status.Idle else Status.None
+        if (engine == null && local.loadedKey == null) _status.value = if (isConfigured()) Status.Idle else Status.None
     }
 
     private fun onConfigChanged() {
+        val cfg = config()
+        if (local.loadedKey != null) {
+            // sampling settings travel with every request; only a different model/GPU/context needs a reload
+            if (!isLocal(cfg) || local.loadedKey != cfg.loadKey) {
+                app.appScope.launch { mutex.withLock { local.shutdown(); refreshIdleStatus() } }
+            } else scheduleUnload()
+            return
+        }
         val e = engine
         if (e == null) { refreshIdleStatus(); return }
         if (engineKey != config().engineKey()) {
@@ -248,12 +322,12 @@ class LlmManager(private val app: NovaApp) {
     private fun scheduleUnload() {
         cancelUnload()
         val minutes = s[K.unloadMinutes]
-        if (minutes <= 0 || engine == null) return
+        if (minutes <= 0 || (engine == null && local.loadedKey == null)) return
         unloadJob = app.appScope.launch {
             delay(minutes * 60_000L)
             AppLog.d("llm", "idle for $minutes min, unloading")
             mutex.withLock {
-                closeEngineLocked()
+                unloadAllLocked()
                 refreshIdleStatus()
             }
         }

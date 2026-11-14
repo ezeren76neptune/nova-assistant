@@ -12,23 +12,34 @@ import app.nova.assistant.core.K
  * Protected by android.permission.DUMP in the manifest, so only adb/system can send it — not other apps.
  */
 class DebugReceiver : BroadcastReceiver() {
+    private fun out(msg: String) { android.util.Log.d("Nova/dump", msg) }
+
     override fun onReceive(context: Context, intent: Intent) {
         intent.getStringExtra("dump")?.let { pkg ->
             val tree = AssistAccessibilityService.instance?.dumpTree(pkg.ifBlank { null }) ?: "accessibility service not running"
-            tree.lines().chunked(40).forEach { AppLog.d("dump", "\n" + it.joinToString("\n")) }
+            tree.lines().chunked(40).forEach { out("\n" + it.joinToString("\n")) }
+            return
+        }
+        // simulate the OS killing the model process (same SIGKILL a memory manager sends)
+        if (intent.hasExtra("killllm")) {
+            val am = context.getSystemService(android.app.ActivityManager::class.java)
+            am.runningAppProcesses?.firstOrNull { it.processName.endsWith(":llm") }?.let {
+                AppLog.d("debug", "killing model process ${it.pid}")
+                android.os.Process.killProcess(it.pid)
+            } ?: AppLog.d("debug", "no model process running")
             return
         }
         intent.getStringExtra("log")?.let { n ->
             val app = context.app
-            AppLog.d("dump", "voiceId: enrolled=${app.voiceId.isEnrolled()} active=${app.voiceId.isActive()} samples=${app.settings[K.voiceIdSamples]} threshold=${app.settings[K.voiceIdThreshold]} model=${app.voiceId.modelState.value} llm=${app.llm.status.value}")
-            AppLog.lines.value.takeLast(n.toIntOrNull() ?: 60).chunked(30).forEach { AppLog.d("dump", "\n" + it.joinToString("\n")) }
+            out("voiceId: enrolled=${app.voiceId.isEnrolled()} active=${app.voiceId.isActive()} samples=${app.settings[K.voiceIdSamples]} threshold=${app.settings[K.voiceIdThreshold]} model=${app.voiceId.modelState.value} llm=${app.llm.status.value}")
+            AppLog.lines.value.takeLast(n.toIntOrNull() ?: 60).chunked(30).forEach { out("\n" + it.joinToString("\n")) }
             return
         }
         intent.getStringExtra("ha")?.let { q ->
             val ha = context.app.home
-            AppLog.d("dump", "HA configured=${ha.isConfigured()} entities=${ha.entities.size} widgets=${ha.widgetIds()} favorites=${ha.favoriteIds()}")
+            out("HA configured=${ha.isConfigured()} entities=${ha.entities.size} widgets=${ha.widgetIds()} favorites=${ha.favoriteIds()}")
             ha.entities.filter { q.isBlank() || it.id.contains(q, true) || it.name.contains(q, true) }.take(80)
-                .chunked(25).forEach { c -> AppLog.d("dump", "\n" + c.joinToString("\n") { "${it.id} | ${it.name} | ${it.state} | ${it.attrs.optString("device_class")}" }) }
+                .chunked(25).forEach { c -> out("\n" + c.joinToString("\n") { "${it.id} | ${it.name} | ${it.state} | ${it.attrs.optString("device_class")}" }) }
             return
         }
         val text = intent.getStringExtra("text")?.takeIf { it.isNotBlank() } ?: return

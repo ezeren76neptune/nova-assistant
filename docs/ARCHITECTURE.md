@@ -9,7 +9,7 @@ NovaApp
  ├─ vosk          speech/VoskModelManager   downloads/loads the offline speech model
  ├─ voiceId       speech/VoiceId            speaker model, voiceprint, verification
  ├─ wake          speech/WakeWordEngine     always-on wake word (own thread + AudioRecord)
- ├─ llm           llm/LlmManager            loads/unloads the model, single-thread inference
+ ├─ llm           llm/LlmManager            model lifecycle; on-device models run in the :llm process
  ├─ home          home/HomeAssistant        HA REST client, entity cache, matching
  ├─ tools         tools/ToolRegistry        every tool, enable/disable, execution
  ├─ agent         agent/Agent               quick commands → LLM tool loop
@@ -43,6 +43,18 @@ NovaApp
    - otherwise waits for auto-dismiss.
 
    Closing the popup, or the popup disappearing for any reason, cancels everything and stops all sound.
+
+## The model process
+
+On-device models (LiteRT-LM / MediaPipe) don't run in the main process. `LlmService` runs in `android:process=":llm"` and holds the engine; `LocalLlmClient` in the main process talks to it.
+
+- **Requests.** `LocalLlmClient` binds the service and sends `LOAD` / `GENERATE` / `CANCEL` messages through a `Messenger`. Partial tokens stream back as `PARTIAL` messages.
+- **Why.** A loaded model uses 1.5–3 GB, and OEM memory killers (OnePlus "o-kill") target the process holding it. Only the model process dies; the wake word, accessibility service and popup live on.
+- **When it dies.** `onServiceDisconnected` fails in-flight requests with `ProcessDied` and drops the binding (so Android doesn't respawn 1.5 GB on its own). `LlmManager.generate` reloads and retries once.
+- **Load watchdog.** A load that takes more than 45 s (normal is ~10 s) restarts the process and tries once more.
+- **Idle unload.** Unbinding ends the process (`onDestroy` → `killProcess`), so every native/GPU byte is returned.
+- **Server backend.** The remote engine stays in the main process; it needs almost no memory.
+- **Startup.** `NovaApp.onCreate` returns early in the `:llm` process, so none of the assistant machinery starts there.
 
 ## Tools
 

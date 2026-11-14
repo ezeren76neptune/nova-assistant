@@ -227,6 +227,7 @@ Android, and especially some phone makers, aggressively kill background apps. No
 - **Starting on boot** and after updates. On Android 14+, a microphone service can't start from the background, so if it can't start itself Nova posts a "tap to resume listening" notification.
 - An optional **partial wake lock** while the screen is off, and a **battery optimization exemption**.
 - **Auto-pause rules:** during calls, with the screen off, below a battery level, or when not charging.
+- **The AI model runs in its own process** (`:llm`). A loaded model uses 1.5–3 GB, and some phones (e.g. OnePlus) kill whichever process holds that much memory. Only the model process dies, so the wake word, popup and accessibility service keep running. The model reloads on the next request (about 10 s), and if it was killed mid-answer, Nova retries automatically. When idle, the whole model process exits so its memory is returned.
 
 Phone-maker tips:
 - **Samsung:** add Nova to *Never sleeping apps*.
@@ -273,7 +274,8 @@ Also see [dontkillmyapp.com](https://dontkillmyapp.com).
 | Wake word never triggers | Check the live test panel. If it hears the wrong words, add variants or switch to *Free speech*. "Microphone blocked" means Android is silencing it, so check the battery settings and that the notification is showing. |
 | Wakes up by itself | Lower sensitivity, turn off "trigger on partial result", or enable Voice ID. |
 | Voice ID rejects you | Lower strictness a little, or re-record in a quieter room with your normal voice. |
-| Stops listening after a while | Battery → Unrestricted, make Nova the default assistant, keep the accessibility service on, and follow the phone-maker tips. Some phones (e.g. OnePlus) kill apps holding a large AI model in memory; set *Unload after idle* (AI model) to a few minutes. |
+| Stops listening after a while | Battery → Unrestricted, make Nova the default assistant, keep the accessibility service on, and follow the phone-maker tips. The AI model already runs in a separate process, so a memory kill only costs a ~10 s model reload. |
+| Wakes up by itself and cuts in | Turn on Voice ID or lower the sensitivity. A wake word while Nova is thinking is ignored; tap ✕ to cancel a request. |
 | "Open with" picker appears | Choose a default in Actions & apps (music app, search engine), or set a default browser in Android. |
 | Spotify opens but plays the wrong thing | Make sure the accessibility service and "screen automation tricks" are on. Spotify UI changes can break this; please open an issue. |
 | Home Assistant sign-in fails | Use the address your phone can reach (try `http://<ip>:8123`). For `https` with your own CA, install the CA in Android's settings first. |
@@ -285,7 +287,6 @@ Also see [dontkillmyapp.com](https://dontkillmyapp.com).
 - Third-party apps can't answer or end calls, change system dark mode, or toggle Wi-Fi/airplane mode directly on modern Android. Nova does these by tapping the actual switch through the accessibility service, so results depend on your phone's Settings layout.
 - Small on-device models still make mistakes with complicated multi-step requests.
 - Spotify playback depends on Spotify's current UI.
-- The AI model currently runs in the same process as the wake word. On phones that kill memory-heavy apps, the listener can briefly stop when that happens. Moving the model into its own process is planned.
 - English is the default; other languages need a matching Vosk model, plus a speech-recognizer and TTS language set.
 
 ## Development
@@ -295,7 +296,7 @@ Also see [dontkillmyapp.com](https://dontkillmyapp.com).
 - **Layout:** `app/src/main/java/app/nova/assistant/`
   - `core/`: settings, state machine (`AssistantController`), models, memory.
   - `speech/`: wake word, recognizers, TTS, Voice ID, Vosk model manager.
-  - `llm/`: engines (LiteRT-LM, MediaPipe, remote), model catalog and downloads.
+  - `llm/`: engines (LiteRT-LM, MediaPipe, remote), the `:llm` model process (`LlmService` + `LocalLlmClient`), model catalog and downloads.
   - `agent/`: agent loop, prompt, reply parser, quick commands, number / time parsing.
   - `tools/`: every tool (clock, comms, device, apps, screen, info, memory, notifications, media, Home Assistant).
   - `home/`: Home Assistant client.
@@ -311,6 +312,8 @@ adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es text "\
 adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es log 60
 # dump the accessibility tree of an app (for writing new UI automation)
 adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es dump com.spotify.music
+# simulate the OS killing the model process (SIGKILL), to test recovery
+adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es killllm 1
 # list Home Assistant entities matching a filter
 adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es ha "light."
 adb logcat -s Nova/dump:D Nova/tool:D Nova/agent:D
