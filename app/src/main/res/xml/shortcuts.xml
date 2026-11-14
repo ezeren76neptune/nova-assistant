@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_mic"
+        android:shortcutId="ask"
+        android:shortcutLongLabel="@string/shortcut_ask_long"
+        android:shortcutShortLabel="@string/shortcut_ask">
+        <intent
+            android:action="app.nova.assistant.ASK"
+            android:targetClass="app.nova.assistant.ui.AssistActivity"
+            android:targetPackage="app.nova.assistant" />
+    </shortcut>
+</shortcuts>

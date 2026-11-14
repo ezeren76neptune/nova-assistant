@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nova</string>
+    <string name="a11y_label">Nova Assistant</string>
+    <string name="a11y_description">Lets Nova act on your screen when you ask: read what\'s on screen, tap and type for you, go home/back, lock the phone, take screenshots, flip quick settings and press Send in messaging apps. It also shows Nova\'s popup and keeps Nova running in the background. Nova never collects or sends this data anywhere; the AI runs on your phone.</string>
+    <string name="notif_label">Nova notification reader</string>
+    <string name="recognizer_label">Nova offline speech</string>
+    <string name="tile_wake">Nova wake word</string>
+    <string name="tile_ask">Ask Nova</string>
+    <string name="shortcut_ask">Ask Nova</string>
+    <string name="shortcut_ask_long">Ask Nova by voice</string>
+    <string name="shortcut_type">Type to Nova</string>
+</resources>
