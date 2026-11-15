@@ -234,9 +234,9 @@ private fun Transcript(state: UiState, showHistory: Boolean, scale: Float, modif
         if (showPartial) item(key = "partial") { Bubble(Who.USER, state.partial, scale, faded = true) }
         if (showStream) item(key = "stream") { Bubble(Who.ASSISTANT, state.streaming, scale) }
         if (showDots) item(key = "dots") { TypingDots() }
-        if (showHint) item(key = "hint") {
+        if (showHint && state.phase != Phase.LISTENING) item(key = "hint") {
             Text(
-                if (state.phase == Phase.LISTENING) "Go ahead — try “set a timer for 5 minutes”" else "Type or tap the mic to talk",
+                "Type or tap the mic to talk",
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp, horizontal = 4.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                 fontSize = 14.sp * scale,
