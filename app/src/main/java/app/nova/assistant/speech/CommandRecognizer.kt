@@ -29,6 +29,8 @@ enum class SttError { NO_SPEECH, BUSY, FATAL, PERMISSION }
 
 interface SttListener {
     fun onReady() {}
+    /** Every candidate transcript (best first), when the recognizer offers alternatives. */
+    fun onAlternatives(all: List<String>) {}
     fun onPartial(text: String)
     fun onLevel(level: Float)
     fun onFinal(text: String)
@@ -136,8 +138,9 @@ class SystemRecognizer(private val app: NovaApp, val onDevice: Boolean) : Comman
                 }
             }
             override fun onResults(results: Bundle?) {
-                val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull { it.isNotBlank() }
-                finish(text ?: lastPartial)
+                val all = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty().filter { it.isNotBlank() }
+                if (all.isNotEmpty()) listener?.onAlternatives(all)
+                finish(all.firstOrNull() ?: lastPartial)
             }
             override fun onPartialResults(partialResults: Bundle?) {
                 val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull { it.isNotBlank() } ?: return
@@ -149,7 +152,12 @@ class SystemRecognizer(private val app: NovaApp, val onDevice: Boolean) : Comman
         val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+            // your custom words as recognition hints (honoured by Android 13+ recognizers)
+            if (Build.VERSION.SDK_INT >= 33) {
+                val words = app.customWords.biasing()
+                if (words.isNotEmpty()) putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, words)
+            }
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, app.packageName)
             if (offline) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             app.settings[K.sttLanguage].takeIf { it.isNotBlank() }?.let { putExtra(RecognizerIntent.EXTRA_LANGUAGE, it) }

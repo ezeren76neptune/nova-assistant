@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import app.nova.assistant.app
 import app.nova.assistant.core.AppLog
+import app.nova.assistant.core.CustomWord
 import app.nova.assistant.core.K
 
 /**
@@ -29,6 +30,15 @@ class DebugReceiver : BroadcastReceiver() {
             } ?: AppLog.d("debug", "no model process running")
             return
         }
+        // custom words: --es addword "MSOE|my university|emma so we,m so e"   --es correct "i go to m s o e"
+        intent.getStringExtra("addword")?.let { spec ->
+            val p = spec.split('|')
+            context.app.customWords.upsert(CustomWord(p[0], p.getOrElse(1) { "" }, p.getOrElse(2) { "" }.split(',').filter { it.isNotBlank() }))
+            out("custom word saved: ${context.app.customWords.words.value.firstOrNull { it.word == p[0] }}")
+            return
+        }
+        intent.getStringExtra("delword")?.let { context.app.customWords.remove(it); out("custom word removed: $it"); return }
+        intent.getStringExtra("correct")?.let { out("correct: \"$it\" -> \"${context.app.customWords.correct(it)}\""); return }
         intent.getStringExtra("log")?.let { n ->
             val app = context.app
             out("voiceId: enrolled=${app.voiceId.isEnrolled()} active=${app.voiceId.isActive()} samples=${app.settings[K.voiceIdSamples]} threshold=${app.settings[K.voiceIdThreshold]} model=${app.voiceId.modelState.value} llm=${app.llm.status.value}")

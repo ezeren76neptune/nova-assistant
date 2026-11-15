@@ -58,6 +58,9 @@ object K {
     val continuous = StrPref("continuous", "after_question") // never | after_question | always
     val duckMedia = BoolPref("duck_media", true)
 
+    // Custom vocabulary (words Nova should hear right)
+    val customWords = StrPref("custom_words", "[]")
+
     // Voice output
     val ttsEnabled = BoolPref("tts_enabled", true)
     val ttsOnlyVoice = BoolPref("tts_only_voice", true)

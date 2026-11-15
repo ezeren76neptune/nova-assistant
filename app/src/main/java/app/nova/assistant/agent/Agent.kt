@@ -252,6 +252,9 @@ object Prompt {
                 list.forEach { append("- ").append(it.name).append(" [").append(it.id).append("] ").append(it.state).append('\n') }
                 append("For rooms/areas or anything not listed, use home_assist with the user's words.\n")
             }
+            app.customWords.promptLines().takeIf { it.isNotBlank() }?.let {
+                append("\n\nWords and names the user uses (spell them exactly like this):\n").append(it).append('\n')
+            }
             if (facts.isNotEmpty()) {
                 append("\n\nThings you know about the user:\n")
                 facts.forEach { append("- ").append(it).append('\n') }

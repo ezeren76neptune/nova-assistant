@@ -5,6 +5,7 @@ import android.content.Context
 import app.nova.assistant.agent.Agent
 import app.nova.assistant.core.AppLog
 import app.nova.assistant.core.AssistantController
+import app.nova.assistant.core.CustomWords
 import app.nova.assistant.core.K
 import app.nova.assistant.core.MemoryStore
 import app.nova.assistant.core.Settings
@@ -38,6 +39,7 @@ class NovaApp : Application() {
     lateinit var popup: PopupPresenter; private set
     lateinit var home: HomeAssistant; private set
     lateinit var voiceId: VoiceId; private set
+    lateinit var customWords: CustomWords; private set
 
     override fun onCreate() {
         super.onCreate()
@@ -46,6 +48,7 @@ class NovaApp : Application() {
         if (processName().endsWith(":llm")) return
         settings = Settings(this)
         memory = MemoryStore(this)
+        customWords = CustomWords(settings)
         vosk = VoskModelManager(this)
         voiceId = VoiceId(this)
         wake = WakeWordEngine(this)

@@ -96,7 +96,7 @@ class AssistantController(private val app: NovaApp) {
         AppLog.d("ctl", "listening with ${rec.name}")
         rec.start(object : SttListener {
             override fun onPartial(text: String) {
-                if (recognizer === rec) update { copy(partial = text) }
+                if (recognizer === rec) update { copy(partial = app.customWords.correct(text)) }
             }
             override fun onLevel(level: Float) {
                 if (recognizer === rec) update { copy(level = level) }
@@ -147,7 +147,9 @@ class AssistantController(private val app: NovaApp) {
     }
 
     fun submit(text: String, voice: Boolean) {
-        val t = text.trim()
+        // fix words the recognizer is known to mishear (Settings → Custom words)
+        val t = (if (voice) app.customWords.correct(text) else text).trim()
+        if (voice && t != text.trim()) AppLog.d("ctl", "custom words: \"${text.trim()}\" → \"$t\"")
         if (t.isEmpty()) return
         cancelDismiss()
         stopRecognizer()

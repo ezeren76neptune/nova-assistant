@@ -20,6 +20,7 @@ Speech recognition for the wake word, the AI model, Voice ID and the device cont
 - [First-run setup](#first-run-setup)
 - [Choosing an AI model](#choosing-an-ai-model)
 - [Wake word & Voice ID](#wake-word--voice-id)
+- [Custom words](#custom-words)
 - [Home Assistant](#home-assistant)
 - [Music, apps & the web](#music-apps--the-web)
 - [The popup](#the-popup)
@@ -165,6 +166,20 @@ Other options:
 
 Voice ID is a convenience filter, not a lock: a recording of you can pass it. That's why opening doors and unlocking always ask for confirmation.
 
+## Custom words
+
+Settings → **Custom words** teaches Nova names, acronyms and jargon it keeps mishearing (e.g. "MSOE", "Claude").
+
+1. Type the word exactly as it should be written, plus an optional note on what it is ("my university").
+2. Tap **Teach by voice** and say it 3 times. Nova listens with the same recognizer it uses for commands and records how it gets misheard ("m s o e", "emma so we", "clawed").
+3. Those mishearings become corrections: whenever you speak, they're replaced with your word before Nova acts on it.
+
+Notes:
+- **Corrections you can see and edit.** Tap one to remove it, or add your own with **Also fix**. Remove ones that are too broad: if "cloud" is learned for "Claude", then saying "cloud" always becomes "Claude".
+- **Acronyms work without recording.** All-caps words are also matched when spelled out ("M S O E", "M.S.O.E.").
+- **Hints for the recognizer and the AI.** Your words are sent to Android's recognizer as hints (Android 13+), and listed for the AI model along with their notes.
+- **Try it** shows what Nova would understand for any sentence you type.
+
 ## Home Assistant
 
 Nova talks to Home Assistant directly through its REST API.
@@ -241,6 +256,7 @@ Also see [dontkillmyapp.com](https://dontkillmyapp.com).
 | Section | What's in it |
 |---|---|
 | **Wake word** | Phrase, variants, mode, sensitivity, partial trigger, same-breath commands, cooldown, mic source, beep / vibrate, Voice ID, offline model URL, live test |
+| **Custom words** | Words Nova should hear right: teach by voice, learned corrections (removable), manual corrections, notes for the AI, live tester |
 | **Speech input** | Recognizer (auto / Google / on-device / Vosk), language, prefer offline, silence timeout, max length, follow-up listening (never / after a question / always), pause or duck music, close if nothing was said |
 | **Voice output** | Text-to-speech on/off, only when you spoke, rate, pitch, engine, read reminders aloud |
 | **AI model** | Backend, model file, downloads, import, HF token, remote server, GPU/CPU, context, reply length, sampling, thinking, constrained JSON, prompt format, preload / unload. Behaviour: assistant name, your name, personality, custom instructions, tool steps, summarize tool results, quick commands, internet tools, memory, keep chat after closing |
@@ -273,6 +289,7 @@ Also see [dontkillmyapp.com](https://dontkillmyapp.com).
 | Accessibility / notification toggle is greyed out | App info → ⋮ → **Allow restricted settings** (Android 13+, sideloaded installs), or install with `adb`. |
 | Wake word never triggers | Check the live test panel. If it hears the wrong words, add variants or switch to *Free speech*. "Microphone blocked" means Android is silencing it, so check the battery settings and that the notification is showing. |
 | Wakes up by itself | Lower sensitivity, turn off "trigger on partial result", or enable Voice ID. |
+| A name or acronym keeps coming out wrong | Settings → Custom words → teach it by voice; remove any correction that's too broad. |
 | Voice ID rejects you | Lower strictness a little, or re-record in a quieter room with your normal voice. |
 | Stops listening after a while | Battery → Unrestricted, make Nova the default assistant, keep the accessibility service on, and follow the phone-maker tips. The AI model already runs in a separate process, so a memory kill only costs a ~10 s model reload. |
 | Wakes up by itself and cuts in | Turn on Voice ID or lower the sensitivity. A wake word while Nova is thinking is ignored; tap ✕ to cancel a request. |

@@ -78,6 +78,7 @@ enum class Screen(val title: String, val subtitle: String) {
     HOME("Nova", ""),
     WAKE("Wake word", "Phrase, sensitivity, offline model, live test"),
     SPEECH("Speech input", "Recognizer, language, follow-up listening"),
+    CUSTOM_WORDS("Custom words", "Teach Nova names and words it mishears"),
     VOICE("Voice output", "Text-to-speech voice, speed, pitch"),
     MODEL("AI model", "On-device model, downloads, server, generation"),
     ACTIONS("Actions & apps", "Confirmations, SMS, timers, search, music, contacts"),
@@ -161,6 +162,7 @@ fun NovaRoot(requested: MutableState<String?>) {
                 Screen.VOICE -> VoiceScreen()
                 Screen.MODEL -> ModelScreen()
                 Screen.ACTIONS -> ActionsScreen()
+                Screen.CUSTOM_WORDS -> CustomWordsScreen()
                 Screen.HOME_ASSISTANT -> HomeAssistantScreen()
                 Screen.TOOLS -> ToolsScreen()
                 Screen.POPUP -> PopupScreen()
