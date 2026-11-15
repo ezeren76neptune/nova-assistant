@@ -23,7 +23,7 @@ object K {
     // Wake word
     val wakeEnabled = BoolPref("wake_enabled", true)
     val wakePhrase = StrPref("wake_phrase", "hey nova")
-    val wakeVariants = StrPref("wake_variants", "hey noah, a nova, hi nova")
+    val wakeVariants = StrPref("wake_variants", "")   // sound-alikes widen detection but add false wakes
     val wakeMode = StrPref("wake_mode", "grammar")          // grammar | free
     val wakeSensitivity = FloatPref("wake_sensitivity", 0.5f)
     val wakeOnPartial = BoolPref("wake_on_partial", true)

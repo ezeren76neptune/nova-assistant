@@ -56,6 +56,7 @@ class LlmManager(private val app: NovaApp) {
     )
 
     init {
+        runCatching { autoPickModel() }
         refreshIdleStatus()
         app.appScope.launch {
             s.changes.collect { key -> if (key in llmKeys) onConfigChanged() }
@@ -87,6 +88,16 @@ class LlmManager(private val app: NovaApp) {
 
     private fun LlmConfig.engineKey(): String =
         if (backend == "remote") "remote|$remoteUrl|$remoteModel|$remoteKey" else loadKey
+
+    /** If no model is chosen yet but one is already in the models folder (e.g. copied over USB), use it. */
+    fun autoPickModel() {
+        if (s[K.modelPath].isNotBlank() && java.io.File(s[K.modelPath]).exists()) return
+        val f = ModelCatalog.modelsDir(app).listFiles { x -> x.name.endsWith(".litertlm") || x.name.endsWith(".task") }
+            ?.filter { it.length() > 50_000_000 }?.maxByOrNull { it.lastModified() } ?: return
+        s[K.modelPath] = f.absolutePath
+        s[K.llmBackend] = ModelCatalog.engineForPath(f.path)
+        AppLog.d("llm", "using model found in the models folder: ${f.name}")
+    }
 
     fun isConfigured(): Boolean = when (s[K.llmBackend]) {
         "none" -> false

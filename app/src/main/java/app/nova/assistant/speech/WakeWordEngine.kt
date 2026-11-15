@@ -29,6 +29,15 @@ import kotlin.math.sqrt
  * "free" mode transcribes everything and fuzzy/phonetically matches the phrase, which also
  * works for made-up names and lets you say the command in the same breath ("Hey Nova set a timer").
  */
+private val DECOYS = listOf(
+    "the", "a", "and", "to", "of", "in", "it", "is", "that", "you", "i", "he", "she", "we", "they", "this", "what",
+    "so", "yeah", "yes", "okay", "oh", "well", "like", "just", "know", "now", "no", "not", "go", "get", "got", "see",
+    "do", "did", "have", "was", "be", "are", "for", "on", "at", "with", "my", "your", "me", "him", "her", "them",
+    "there", "here", "all", "one", "two", "right", "good", "really", "think", "want", "can", "will", "would", "about",
+    "out", "up", "down", "over", "never", "other", "nothing", "every", "very", "open", "hello", "hi", "hey", "new",
+    "no way", "how", "who", "why", "where", "when", "come", "time", "look", "make", "said", "say", "man", "baby",
+)
+
 class WakeWordEngine(private val app: NovaApp) {
     enum class Status { STOPPED, NO_PERMISSION, NO_MODEL, LISTENING, PAUSED, ERROR }
 
@@ -124,6 +133,7 @@ class WakeWordEngine(private val app: NovaApp) {
                 if (model == null) { _status.value = Status.NO_MODEL; waitFor(3000); continue }
                 if (rec == null || reconfigure) {
                     rec?.close()
+                    confirmRec?.close(); confirmRec = null
                     reconfigure = false
                     rec = buildRecognizer(model)
                 }
@@ -162,8 +172,15 @@ class WakeWordEngine(private val app: NovaApp) {
                         heard.value = p
                         if (p == partialStreak) streakCount++ else { partialStreak = p; streakCount = 1 }
                         val need = if (app.settings[K.wakeSensitivity] > 0.7f) 1 else 2
-                        if (streakCount >= need && matchPartial(p, free)) {
-                            trigger(null); rec.reset(); partialStreak = ""; streakCount = 0
+                        if (streakCount >= need && System.currentTimeMillis() > partialSuppressUntil && matchPartial(p, free)) {
+                            // early guesses carry no confidence — re-decode the last 2 s with word confidences first
+                            val (ok, detail) = confirmFromBuffer(model)
+                            if (ok) trigger(null, "partial \"$p\", $detail")
+                            else {
+                                AppLog.d("wake", "ignored a possible wake word: partial \"$p\", $detail")
+                                partialSuppressUntil = System.currentTimeMillis() + 1500
+                            }
+                            rec.reset(); partialStreak = ""; streakCount = 0
                         }
                     }
                 } else if (free) {
@@ -181,17 +198,67 @@ class WakeWordEngine(private val app: NovaApp) {
         mic?.let { runCatching { it.stop() }; it.release() }
         recording = false
         runCatching { rec?.close() }
+        runCatching { confirmRec?.close() }; confirmRec = null
         level.value = 0f
+    }
+
+    @Volatile private var partialSuppressUntil = 0L
+    private var confirmRec: Recognizer? = null
+
+    /**
+     * Wake phrases + everyday "decoy" words + [unk]. With only the phrase to choose from, the decoder forces any
+     * speech (TV, people talking) into "hey nova"; decoys give ordinary speech somewhere else to land.
+     */
+    private fun grammar(): String {
+        val phrases = app.settings.wakePhrases()
+        val phraseWords = phrases.flatMap { it.split(' ') }.toSet()
+        val g = JSONArray()
+        phrases.forEach { g.put(it) }
+        DECOYS.filter { it !in phraseWords && it !in phrases }.forEach { g.put(it) }
+        g.put("[unk]")
+        return g.toString()
+    }
+
+    /** Re-decodes the last 2 s of audio with word confidences (partials have none). */
+    private fun confirmFromBuffer(model: Model): Pair<Boolean, String> {
+        val r = confirmRec ?: Recognizer(model, 16000f, grammar()).also { it.setWords(true); confirmRec = it }
+        r.reset()
+        val audio = recentAudio(2000)
+        var off = 0
+        while (off < audio.size) {
+            val len = minOf(1600, audio.size - off)
+            r.acceptWaveForm(audio.copyOfRange(off, off + len), len)
+            off += len
+        }
+        val o = JSONObject(r.finalResult)
+        val (phrase, conf) = phraseConfidence(o) ?: return false to "re-check heard \"${o.optString("text")}\""
+        val threshold = 0.9 - sensitivity() * 0.5
+        return (conf >= threshold) to "re-check \"$phrase\" confidence ${"%.2f".format(conf)} (needs ${"%.2f".format(threshold)})"
+    }
+
+    /** Best wake phrase in a final result and the average confidence of its words. */
+    private fun phraseConfidence(o: JSONObject): Pair<String, Double>? {
+        val text = TextNorm.basic(o.optString("text"))
+        val words = o.optJSONArray("result")
+        var best: Pair<String, Double>? = null
+        for (phrase in app.settings.wakePhrases()) {
+            if (!(" $text ").contains(" $phrase ")) continue
+            val pw = phrase.split(' ')
+            var conf = 0.0
+            if (words != null && words.length() >= pw.size) {
+                val list = List(words.length()) { words.getJSONObject(it) }
+                val start = (0..list.size - pw.size).firstOrNull { i -> pw.indices.all { list[i + it].optString("word") == pw[it] } }
+                // every word of the phrase must be confident, not just the average
+                if (start != null) conf = pw.indices.map { list[start + it].optDouble("conf", 0.0) }.min()
+            }
+            if (best == null || conf > best.second) best = phrase to conf
+        }
+        return best
     }
 
     private fun buildRecognizer(model: Model): Recognizer {
         val free = app.settings[K.wakeMode] == "free"
-        val r = if (free) Recognizer(model, 16000f) else {
-            val g = JSONArray()
-            app.settings.wakePhrases().forEach { g.put(it) }
-            g.put("[unk]")
-            Recognizer(model, 16000f, g.toString())
-        }
+        val r = if (free) Recognizer(model, 16000f) else Recognizer(model, 16000f, grammar())
         r.setWords(true)
         runCatching { r.setEndpointerMode(if (free) 0 else 1) } // short endpointing for the wake grammar
         AppLog.d("wake", "recognizer ready (mode=${if (free) "free" else "grammar"}, phrases=${app.settings.wakePhrases()})")
@@ -232,24 +299,14 @@ class WakeWordEngine(private val app: NovaApp) {
             val end = fuzzyFind(text) ?: return
             val words = text.split(' ')
             val trailing = words.drop(end).joinToString(" ").trim()
-            trigger(if (app.settings[K.commandSameBreath] && trailing.split(' ').size >= 2) trailing else null)
+            trigger(if (app.settings[K.commandSameBreath] && trailing.split(' ').size >= 2) trailing else null, "heard \"$text\"")
             return
         }
-        // grammar mode: check confidence of the matched words
-        val words = o.optJSONArray("result")
-        for (phrase in app.settings.wakePhrases()) {
-            if (!(" $text ").contains(" $phrase ")) continue
-            val pw = phrase.split(' ')
-            var conf = 1.0
-            if (words != null && words.length() >= pw.size) {
-                val list = List(words.length()) { words.getJSONObject(it) }
-                val start = (0..list.size - pw.size).firstOrNull { i -> pw.indices.all { list[i + it].optString("word") == pw[it] } }
-                if (start != null) conf = pw.indices.map { list[start + it].optDouble("conf", 1.0) }.average()
-            }
-            val threshold = 0.9 - sensitivity() * 0.5
-            if (conf >= threshold) { trigger(null); return }
-            AppLog.d("wake", "heard '$phrase' but confidence ${"%.2f".format(conf)} < ${"%.2f".format(threshold)}")
-        }
+        // grammar mode: every word of the phrase must be confident
+        val (phrase, conf) = phraseConfidence(o) ?: return
+        val threshold = 0.9 - sensitivity() * 0.5
+        if (conf >= threshold) { trigger(null, "heard \"$text\", confidence ${"%.2f".format(conf)}"); return }
+        AppLog.d("wake", "ignored a possible wake word: heard \"$text\", '$phrase' confidence ${"%.2f".format(conf)} < ${"%.2f".format(threshold)}")
     }
 
     /** Returns the word index right after the wake phrase, or null. */
@@ -270,7 +327,7 @@ class WakeWordEngine(private val app: NovaApp) {
         return null
     }
 
-    private fun trigger(trailing: String?) {
+    private fun trigger(trailing: String?, why: String = "") {
         val now = System.currentTimeMillis()
         if (now - lastTrigger < app.settings[K.wakeCooldownMs] || now - resumedAt < 400) return
         // Voice ID: only wake for the enrolled voice
@@ -279,7 +336,7 @@ class WakeWordEngine(private val app: NovaApp) {
             return
         }
         lastTrigger = now
-        AppLog.d("wake", "WAKE WORD detected${trailing?.let { " + \"$it\"" } ?: ""}")
+        AppLog.d("wake", "WAKE WORD detected ($why)${trailing?.let { " + \"$it\"" } ?: ""}")
         main.post { onWake?.invoke(trailing) }
     }
 }
