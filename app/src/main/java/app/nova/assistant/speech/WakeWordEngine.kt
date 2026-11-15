@@ -38,6 +38,8 @@ private val DECOYS = listOf(
     "no way", "how", "who", "why", "where", "when", "come", "time", "look", "make", "said", "say", "man", "baby",
 )
 
+private const val HOLD_MEDIA = "media playing"
+
 class WakeWordEngine(private val app: NovaApp) {
     enum class Status { STOPPED, NO_PERMISSION, NO_MODEL, LISTENING, PAUSED, ERROR }
 
@@ -120,8 +122,11 @@ class WakeWordEngine(private val app: NovaApp) {
         var streakCount = 0
         while (running) {
             try {
+                if (app.settings[K.wakeWhilePlaying] == "pause") {
+                    if (speakerPlaying()) holds.add(HOLD_MEDIA) else holds.remove(HOLD_MEDIA)
+                } else holds.remove(HOLD_MEDIA)
                 if (holds.isNotEmpty()) {
-                    mic?.let { runCatching { it.stop() }; it.release() }; mic = null; recording = false
+                    mic?.let { runCatching { it.stop() }; it.release() }; mic = null; recording = false; releaseEffects()
                     _status.value = Status.PAUSED; level.value = 0f
                     synchronized(lock) { if (holds.isNotEmpty() && running) lock.wait(1000) }
                     continue
@@ -174,8 +179,10 @@ class WakeWordEngine(private val app: NovaApp) {
                         val need = if (app.settings[K.wakeSensitivity] > 0.7f) 1 else 2
                         if (streakCount >= need && System.currentTimeMillis() > partialSuppressUntil && matchPartial(p, free)) {
                             // early guesses carry no confidence — re-decode the last 2 s with word confidences first
-                            val (ok, detail) = confirmFromBuffer(model)
-                            if (ok) trigger(null, "partial \"$p\", $detail")
+                            val strict = strictNow()
+                            val (ok0, detail) = confirmFromBuffer(model, requireLead = strict)
+                            val ok = ok0 && (!strict || phraseLeads(p))
+                            if (ok) trigger(null, "partial \"$p\", $detail${if (strict) ", speaker playing" else ""}")
                             else {
                                 AppLog.d("wake", "ignored a possible wake word: partial \"$p\", $detail")
                                 partialSuppressUntil = System.currentTimeMillis() + 1500
@@ -189,7 +196,7 @@ class WakeWordEngine(private val app: NovaApp) {
                 }
             } catch (t: Throwable) {
                 AppLog.d("wake", "engine error", t)
-                mic?.let { runCatching { it.release() } }; mic = null; recording = false
+                mic?.let { runCatching { it.release() } }; mic = null; recording = false; releaseEffects()
                 runCatching { rec?.close() }; rec = null
                 _status.value = Status.ERROR
                 waitFor(3000)
@@ -197,6 +204,7 @@ class WakeWordEngine(private val app: NovaApp) {
         }
         mic?.let { runCatching { it.stop() }; it.release() }
         recording = false
+        releaseEffects()
         runCatching { rec?.close() }
         runCatching { confirmRec?.close() }; confirmRec = null
         level.value = 0f
@@ -220,7 +228,7 @@ class WakeWordEngine(private val app: NovaApp) {
     }
 
     /** Re-decodes the last 2 s of audio with word confidences (partials have none). */
-    private fun confirmFromBuffer(model: Model): Pair<Boolean, String> {
+    private fun confirmFromBuffer(model: Model, requireLead: Boolean = false): Pair<Boolean, String> {
         val r = confirmRec ?: Recognizer(model, 16000f, grammar()).also { it.setWords(true); confirmRec = it }
         r.reset()
         val audio = recentAudio(2000)
@@ -232,6 +240,8 @@ class WakeWordEngine(private val app: NovaApp) {
         }
         val o = JSONObject(r.finalResult)
         val (phrase, conf) = phraseConfidence(o) ?: return false to "re-check heard \"${o.optString("text")}\""
+        if (requireLead && !phraseLeads(o.optString("text")))
+            return false to "re-check heard \"${o.optString("text")}\" — phrase not at the start while the speaker plays"
         val threshold = 0.9 - sensitivity() * 0.5
         return (conf >= threshold) to "re-check \"$phrase\" confidence ${"%.2f".format(conf)} (needs ${"%.2f".format(threshold)})"
     }
@@ -265,6 +275,63 @@ class WakeWordEngine(private val app: NovaApp) {
         return r
     }
 
+    private val micEffects = mutableListOf<android.media.audiofx.AudioEffect>()
+    private var effectsLogged = false
+
+    /** Echo cancellation + noise suppression on the wake mic, so the phone's own sound is subtracted. */
+    private fun attachEffects(r: AudioRecord) {
+        val sid = r.audioSessionId
+        val aec = if (android.media.audiofx.AcousticEchoCanceler.isAvailable())
+            runCatching { android.media.audiofx.AcousticEchoCanceler.create(sid)?.apply { enabled = true } }.getOrNull() else null
+        val ns = if (android.media.audiofx.NoiseSuppressor.isAvailable())
+            runCatching { android.media.audiofx.NoiseSuppressor.create(sid)?.apply { enabled = true } }.getOrNull() else null
+        listOfNotNull(aec, ns).forEach { micEffects += it }
+        if (!effectsLogged) {
+            effectsLogged = true
+            AppLog.d("wake", "echo cancellation ${if (aec?.enabled == true) "on" else "not available"}, noise suppression ${if (ns?.enabled == true) "on" else "not available"}")
+        }
+    }
+
+    private fun releaseEffects() {
+        micEffects.forEach { runCatching { it.release() } }
+        micEffects.clear()
+    }
+
+    private var playbackCheckedAt = 0L
+    private var playbackOnSpeaker = false
+
+    /** Is the phone playing sound out loud right now (not through headphones/Bluetooth)? */
+    fun speakerPlaying(): Boolean {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - playbackCheckedAt < 800) return playbackOnSpeaker
+        playbackCheckedAt = now
+        val am = app.getSystemService(android.media.AudioManager::class.java)
+        playbackOnSpeaker = am.isMusicActive && run {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                val devs = am.getAudioDevicesForAttributes(
+                    android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).build()
+                )
+                devs.isEmpty() || devs.any { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER || it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE }
+            } else {
+                val ext = setOf(
+                    android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES, android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                    android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
+                    android.media.AudioDeviceInfo.TYPE_HEARING_AID,
+                )
+                am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS).none { it.type in ext }
+            }
+        }
+        return playbackOnSpeaker
+    }
+
+    /** While the speaker plays, the phrase must start the utterance — "… hey nova" mid-talk is the TV, not you. */
+    private fun strictNow() = app.settings[K.wakeWhilePlaying] == "strict" && speakerPlaying()
+
+    private fun phraseLeads(text: String): Boolean {
+        val t = text.replace("[unk]", " unk ").let { TextNorm.basic(it) }
+        return app.settings.wakePhrases().any { t == it || t.startsWith("$it ") }
+    }
+
     @SuppressLint("MissingPermission")
     private fun openMic(): AudioRecord? {
         val src = when (app.settings[K.audioSource]) {
@@ -276,7 +343,8 @@ class WakeWordEngine(private val app: NovaApp) {
         val min = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         return try {
             val r = AudioRecord(src, 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min * 2, 16000))
-            if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); AppLog.d("wake", "AudioRecord init failed (mic busy?)"); null } else r
+            if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); AppLog.d("wake", "AudioRecord init failed (mic busy?)"); null }
+            else r.also { attachEffects(it) }
         } catch (t: Throwable) {
             AppLog.d("wake", "cannot open mic", t); null
         }
@@ -304,6 +372,10 @@ class WakeWordEngine(private val app: NovaApp) {
         }
         // grammar mode: every word of the phrase must be confident
         val (phrase, conf) = phraseConfidence(o) ?: return
+        if (strictNow() && !phraseLeads(text)) {
+            AppLog.d("wake", "ignored a possible wake word while the speaker plays: heard \"$text\"")
+            return
+        }
         val threshold = 0.9 - sensitivity() * 0.5
         if (conf >= threshold) { trigger(null, "heard \"$text\", confidence ${"%.2f".format(conf)}"); return }
         AppLog.d("wake", "ignored a possible wake word: heard \"$text\", '$phrase' confidence ${"%.2f".format(conf)} < ${"%.2f".format(threshold)}")

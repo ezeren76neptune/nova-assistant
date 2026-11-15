@@ -157,6 +157,7 @@ Other options:
   - *Precise* listens only for the phrase. It has the lowest battery use and fewest false wakes, but the words must exist in Vosk's vocabulary; Nova warns you if one doesn't.
   - *Free speech* transcribes everything and matches the phrase phonetically. It works for any made-up word and allows "hey nova set a timer" in one breath.
 - **Sensitivity, partial-result triggering, cooldown, mic source, beep / vibrate on wake.**
+- **Sound from the phone itself.** The wake mic uses Android's echo canceller and noise suppressor, so the phone's own playback is largely subtracted. While the phone plays sound through its speaker (not headphones or Bluetooth), the wake phrase must start what was heard: "hey nova" in the middle of a video or song is ignored. Alternatively, pause the wake word while the speaker plays (Wake word → "While the phone plays sound").
 - **Live test.** Shows what the wake engine hears, the mic level, and whether Android is silencing the mic.
 
 **Voice ID** (Wake word → Voice ID)
@@ -289,7 +290,7 @@ Also see [dontkillmyapp.com](https://dontkillmyapp.com).
 |---|---|
 | Accessibility / notification toggle is greyed out | App info → ⋮ → **Allow restricted settings** (Android 13+, sideloaded installs), or install with `adb`. |
 | Wake word never triggers | Check the live test panel. If it hears the wrong words, add variants or switch to *Free speech*. "Microphone blocked" means Android is silencing it, so check the battery settings and that the notification is showing. |
-| Wakes up by itself | Lower sensitivity, turn off "trigger on partial result", or enable Voice ID. |
+| Wakes up by itself | Turn on Voice ID (ignores other voices, including TV/videos), lower sensitivity, or turn off "trigger on partial result". If it's sound from the phone itself, set "While the phone plays sound" to *Pause*. |
 | A name or acronym keeps coming out wrong | Settings → Custom words → teach it by voice; remove any correction that's too broad. |
 | Voice ID rejects you | Lower strictness a little, or re-record in a quieter room with your normal voice. |
 | Stops listening after a while | Battery → Unrestricted, make Nova the default assistant, keep the accessibility service on, and follow the phone-maker tips. The AI model already runs in a separate process, so a memory kill only costs a ~10 s model reload. |

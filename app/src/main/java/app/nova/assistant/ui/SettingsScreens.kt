@@ -132,6 +132,14 @@ fun WakeScreen() {
             summary = "Higher triggers more easily (and more false alarms).",
             format = { "${(it * 100).toInt()}%" },
         )
+        ChoicePref(
+            "While the phone plays sound", K.wakeWhilePlaying,
+            listOf(
+                "strict" to "Stricter — ignore the phrase in the middle of other talk (TV, videos)",
+                "pause" to "Pause the wake word while the speaker plays",
+                "normal" to "Listen normally",
+            ),
+        )
         SwitchPref("Trigger on partial result", K.wakeOnPartial, "Faster: reacts as soon as the phrase is heard, before you pause.")
         SwitchPref(
             "Command in the same breath", K.commandSameBreath,

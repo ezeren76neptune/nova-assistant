@@ -41,7 +41,7 @@ class DebugReceiver : BroadcastReceiver() {
         intent.getStringExtra("correct")?.let { out("correct: \"$it\" -> \"${context.app.customWords.correct(it)}\""); return }
         intent.getStringExtra("log")?.let { n ->
             val app = context.app
-            out("voiceId: enrolled=${app.voiceId.isEnrolled()} active=${app.voiceId.isActive()} samples=${app.settings[K.voiceIdSamples]} threshold=${app.settings[K.voiceIdThreshold]} model=${app.voiceId.modelState.value} llm=${app.llm.status.value}")
+            out("voiceId: enrolled=${app.voiceId.isEnrolled()} active=${app.voiceId.isActive()} samples=${app.settings[K.voiceIdSamples]} threshold=${app.settings[K.voiceIdThreshold]} model=${app.voiceId.modelState.value} llm=${app.llm.status.value} speakerPlaying=${app.wake.speakerPlaying()} wakeWhilePlaying=${app.settings[K.wakeWhilePlaying]}")
             AppLog.lines.value.takeLast(n.toIntOrNull() ?: 60).chunked(30).forEach { out("\n" + it.joinToString("\n")) }
             return
         }
