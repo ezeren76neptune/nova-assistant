@@ -306,7 +306,16 @@ class WakeWordEngine(private val app: NovaApp) {
         if (now - playbackCheckedAt < 800) return playbackOnSpeaker
         playbackCheckedAt = now
         val am = app.getSystemService(android.media.AudioManager::class.java)
-        playbackOnSpeaker = am.isMusicActive && run {
+        // any app: the media stream flag, plus every active player Android knows about (videos, games, browsers…)
+        val anyPlaying = am.isMusicActive || runCatching {
+            am.activePlaybackConfigurations.any { c ->
+                c.audioAttributes.usage in setOf(
+                    android.media.AudioAttributes.USAGE_MEDIA, android.media.AudioAttributes.USAGE_GAME,
+                    android.media.AudioAttributes.USAGE_UNKNOWN, android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE,
+                )
+            }
+        }.getOrDefault(false)
+        playbackOnSpeaker = anyPlaying && run {
             if (android.os.Build.VERSION.SDK_INT >= 33) {
                 val devs = am.getAudioDevicesForAttributes(
                     android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).build()
