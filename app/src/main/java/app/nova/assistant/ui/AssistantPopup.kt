@@ -147,7 +147,7 @@ fun AssistantPopup(state: UiState, modifier: Modifier = Modifier, onRequestTypin
                         state = rememberDraggableState { d -> dragY = (dragY + d).coerceAtLeast(0f) },
                         onDragStopped = { velocity ->
                             if (dragY > dismissPx || velocity > 2500f) {
-                                ctl.dismiss()
+                                ctl.dismiss("swiped down")
                             } else {
                                 animate(dragY, 0f) { v, _ -> dragY = v }
                             }
@@ -174,7 +174,7 @@ fun AssistantPopup(state: UiState, modifier: Modifier = Modifier, onRequestTypin
                         overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
-                    IconButton(onClick = { ctl.dismiss() }) {
+                    IconButton(onClick = { ctl.dismiss("close button") }) {
                         Icon(painterResource(R.drawable.ic_close), contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }

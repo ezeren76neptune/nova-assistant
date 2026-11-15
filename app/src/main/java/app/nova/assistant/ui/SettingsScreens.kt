@@ -361,7 +361,7 @@ fun PopupScreen() {
         )
         IntSliderPref(
             "Auto-dismiss after", K.popupAutoDismissSec, 0..60, 1,
-            summary = "Closes after the reply when you don't interact.",
+            summary = "Closes when you haven't touched it or spoken for this long (and right away when it was listening and heard nothing).",
             format = { if (it == 0) "Never" else "$it s" },
         )
         SwitchPref("Tap outside to dismiss", K.popupDismissOutside)

@@ -198,7 +198,8 @@ class AssistantController(private val app: NovaApp) {
     }
 
     /** Closes the popup and stops every sound Nova makes (voice, listening, earcons hold, audio focus). */
-    fun dismiss() {
+    fun dismiss(reason: String = "closed") {
+        if (_state.value.visible) AppLog.d("ctl", "popup closed ($reason)")
         cancelDismiss()
         listenJob?.cancel()
         stopRecognizer()
@@ -222,7 +223,7 @@ class AssistantController(private val app: NovaApp) {
     }
 
     fun onOutsideTouch() {
-        if (s[K.popupDismissOutside] && !_state.value.typing) dismiss()
+        if (s[K.popupDismissOutside] && !_state.value.typing) dismiss("tapped outside")
     }
 
     fun userInteracted() {
@@ -265,7 +266,7 @@ class AssistantController(private val app: NovaApp) {
         }
         val next: () -> Unit = {
             when {
-                r.dismiss -> dismiss()
+                r.dismiss -> dismiss("action done")
                 listenAgain -> startListening()
                 else -> toReady()
             }
@@ -273,7 +274,7 @@ class AssistantController(private val app: NovaApp) {
         // the popup may already be gone (e.g. hidden for a screenshot): never talk without it on screen
         if (!app.popup.isShowing()) {
             AppLog.d("ctl", "popup not on screen — not speaking")
-            if (r.dismiss) { dismiss(); return }
+            if (r.dismiss) { dismiss("action done"); return }
         }
         val speak = s[K.ttsEnabled] && (lastInputVoice || !s[K.ttsOnlyVoice]) && r.reply.isNotBlank() &&
             app.popup.isShowing() && !r.quiet
@@ -290,9 +291,10 @@ class AssistantController(private val app: NovaApp) {
         } else next()
     }
 
+    /** Listening ended with nothing said: the recognizer already waited out the silence, so close right away. */
     private fun noSpeech() {
-        val hasTurns = _state.value.turns.isNotEmpty()
-        if (!hasTurns && s[K.dismissOnNoSpeech]) dismiss() else toReady()
+        if (s[K.dismissOnNoSpeech] && !_state.value.typing && _state.value.pending == null) dismiss("nothing said")
+        else toReady()
     }
 
     private fun toReady(schedule: Boolean = true) {
@@ -330,10 +332,12 @@ class AssistantController(private val app: NovaApp) {
         cancelDismiss()
         val sec = s[K.popupAutoDismissSec]
         if (sec <= 0 || _state.value.typing || !_state.value.visible) return
+        // a pending "Send this?" gets longer before it quietly goes away (and is cancelled)
+        val waitMs = sec * 1000L * (if (_state.value.pending != null) 3 else 1)
         dismissJob = scope.launch {
-            delay(sec * 1000L)
+            delay(waitMs)
             val st = _state.value
-            if (st.phase == Phase.READY && !st.typing && st.pending == null) dismiss()
+            if (st.phase == Phase.READY && !st.typing) dismiss("idle ${waitMs / 1000}s")
         }
     }
 

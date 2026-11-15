@@ -219,6 +219,7 @@ Nova talks to Home Assistant directly through its REST API.
 - Slides up over any app as an **accessibility overlay**, so it needs no "display over other apps" permission. On the lock screen it's a full-screen popup that wakes the screen.
 - Shows the live transcript as you speak, the reply as it streams in, and Confirm / Cancel buttons when an action needs approval.
 - The text box takes typed follow-ups. Tap the mic to talk again; Nova also starts listening again on its own when it asks you a question (configurable).
+- **Closes itself when you're done:** after **5 seconds** with no touch and no speech (any touch restarts the countdown; typing keeps it open), and immediately when it was listening for a follow-up and heard nothing. Adjustable under Popup → Auto-dismiss.
 - **Every new request starts a fresh chat**, and closing the popup clears it. Follow-ups inside the open popup continue the conversation. One exception: right after a volume or brightness change, "set it to 50%" still knows what "it" means.
 - **Closing the popup stops every sound Nova makes:** its voice, listening, and any pending AI reply. That includes leaving the full-screen popup with Home or switching apps.
 - Music you start is never talked over: Nova stays silent when it starts or controls playback.

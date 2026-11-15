@@ -183,7 +183,7 @@ internal class OverlayWindow(
         }
         val r = OverlayRoot(
             themed,
-            onBack = { app.controller.dismiss() },
+            onBack = { app.controller.dismiss("back key") },
             onOutside = { if (!focusable) app.controller.onOutsideTouch() },
             onDetached = { if (!removing) presenter.onOverlayLost(this) },
         )

@@ -54,7 +54,7 @@ class AssistActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         applyWindowFlags()
-        onBackPressedDispatcher.addCallback(this) { app.controller.dismiss() }
+        onBackPressedDispatcher.addCallback(this) { app.controller.dismiss("back key") }
         if (!handleIntent(intent)) return
 
         setContent { NovaTheme { Content() } }
@@ -183,7 +183,7 @@ class AssistActivity : ComponentActivity() {
         if (registered && !closingFromPresenter && isFinishing && !isChangingConfigurations &&
             a.controller.state.value.visible
         ) {
-            a.controller.dismiss()
+            a.controller.dismiss("popup screen closed")
         }
         super.onDestroy()
     }
@@ -200,7 +200,7 @@ class AssistActivity : ComponentActivity() {
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.12f))
                     .clickable(interactionSource = noRipple, indication = null) {
-                        if (dismissOutside) app.controller.dismiss()
+                        if (dismissOutside) app.controller.dismiss("tapped outside")
                     },
             )
             AssistantPopup(

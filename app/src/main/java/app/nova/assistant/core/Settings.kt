@@ -130,7 +130,7 @@ object K {
 
     // Popup
     val popupMode = StrPref("popup_mode", "auto")             // auto | overlay | activity
-    val popupAutoDismissSec = IntPref("popup_auto_dismiss", 12)
+    val popupAutoDismissSec = IntPref("popup_auto_dismiss", 5)   // close when untouched and silent this long
     val popupDismissOutside = BoolPref("popup_dismiss_outside", true)
     val popupShowWhenLocked = BoolPref("popup_when_locked", true)
     val popupTextScale = FloatPref("popup_text_scale", 1.0f)
