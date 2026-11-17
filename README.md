@@ -173,9 +173,12 @@ Voice ID is a convenience filter, not a lock: a recording of you can pass it. Th
 ## Personal index
 
 Nova keeps a private, on-device index so it can answer about *your* stuff without thinking it through step by step, a bit like Siri's personal context:
-- **What's searched:** the last 30 days of notifications, captured as they arrive (they'd otherwise vanish when dismissed); your text messages (last 90 days); and your calendar (past week and next two months). Texts and calendar are read live.
+- **What's searched:** the last 30 days of notifications, captured as they arrive (they'd otherwise vanish when dismissed); your text messages (last 90 days); and your calendar (past week and next two months). Texts and calendar are snapshotted and refreshed every 10 minutes, so lookups stay fast.
+- **Index phone now:** Settings → Memory → *Index phone now* re-reads everything on demand (including what's in the notification shade) and shows exactly what was found, in Notifications / Texts / Calendar tabs. If a permission is missing, the tab says so instead of looking empty. Turn off *Remember notifications in the background* to save notifications only when you tap the button.
+- **Notification index:** a list of every saved notification with an ✕ to delete each one, or *Clear all*.
 - **Automatic context:** each request is matched against the index with a fast keyword search, no AI call. The best hits go to the AI with your question ("possibly relevant: text from the dental office, *your appointment Tue 3 PM at 123 Main St*").
 - **`search_phone` tool:** the AI can also search the index itself when it needs more.
+- **No guessing:** when Nova hands something from your phone to the AI, the popup shows it ("From your phone: Text from …").
 - **Example:** "Get me directions to my dentist appointment" finds the address in your texts and opens Maps there.
 - **Privacy:** nothing leaves the phone. Turn the index or the auto-context off, or clear it, under Settings → Memory → Personal index.
 
@@ -279,7 +282,7 @@ Also see [dontkillmyapp.com](https://dontkillmyapp.com).
 | **Tools** | Turn each of the ~60 tools on or off |
 | **Popup** | Overlay vs full screen, auto-dismiss, tap outside to close, show on lock screen, text size, full history, accessibility button |
 | **Background & battery** | Start on boot, listen with screen off, only when charging, pause below a battery %, pause during calls, wake lock, minimized notification, phone-maker tips |
-| **Memory** | Facts Nova remembers, notes, recent conversation log, personal index (notification capture, auto-context, clear) |
+| **Memory** | Facts Nova remembers, notes, recent conversation log, personal index (Index phone now with results, background notification capture, auto-context, notification list with per-item delete) |
 | **Logs** | In-app diagnostic log (copy / clear) |
 
 ## Privacy & security
@@ -347,6 +350,9 @@ adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es dump co
 adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es killllm 1
 # list Home Assistant entities matching a filter
 adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es ha "light."
+# re-index the phone, or search the index
+adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es reindex 1
+adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es search "dentist"
 adb logcat -s Nova/dump:D Nova/tool:D Nova/agent:D
 ```
 

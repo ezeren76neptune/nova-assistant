@@ -8,6 +8,7 @@ import android.provider.CalendarContract
 import androidx.core.content.ContextCompat
 import app.nova.assistant.NovaApp
 import app.nova.assistant.tools.Contacts
+import app.nova.assistant.service.NotificationWatcher
 import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
@@ -35,6 +36,22 @@ class PersonalIndex(private val app: NovaApp) {
 
     private val file = File(app.filesDir, "notification_index.jsonl")
     private val notifs = ArrayDeque<Item>()
+    private val _items = kotlinx.coroutines.flow.MutableStateFlow<List<Item>>(emptyList())
+    /** Saved notifications, newest first (for Settings → Memory → Notification index). */
+    val items: kotlinx.coroutines.flow.StateFlow<List<Item>> get() { load(); return _items }
+
+    private fun publish() { _items.value = synchronized(notifs) { notifs.toList().asReversed() } }
+
+    private fun rewrite() {
+        runCatching { file.writeText(notifs.joinToString("\n", postfix = if (notifs.isEmpty()) "" else "\n") { it.json() }) }
+    }
+
+    /** Deletes one saved notification. */
+    fun remove(item: Item) {
+        load()
+        synchronized(notifs) { if (notifs.remove(item)) rewrite() }
+        publish()
+    }
     @Volatile private var loaded = false
 
     private fun load() {
@@ -54,32 +71,69 @@ class PersonalIndex(private val app: NovaApp) {
             while (notifs.size > MAX) notifs.removeFirst()
             loaded = true
         }
+        publish()
     }
 
     fun size(): Int { load(); return notifs.size }
 
     /** Called by the notification listener for every new notification. */
-    fun addNotification(appLabel: String, title: String, text: String, time: Long) {
-        if (!app.settings[K.indexNotifications] || (title.isBlank() && text.isBlank())) return
+    fun addNotification(appLabel: String, title: String, text: String, time: Long, force: Boolean = false): Boolean {
+        if ((!force && !app.settings[K.indexNotifications]) || (title.isBlank() && text.isBlank())) return false
         load()
         val item = Item("notification", title.trim(), text.trim(), time, appLabel)
         synchronized(notifs) {
             // updates of the same conversation repeat the same text — keep one
-            if (notifs.takeLast(30).any { it.app == item.app && it.title == item.title && it.text == item.text }) return
+            if (notifs.any { it.app == item.app && it.title == item.title && it.text == item.text }) return false
             notifs.addLast(item)
             val compact = notifs.size > MAX + 200
             while (notifs.size > MAX) notifs.removeFirst()
-            runCatching {
-                if (compact) file.writeText(notifs.joinToString("\n", postfix = "\n") { it.json() })
-                else file.appendText(item.json() + "\n")
-            }
+            if (compact) rewrite() else runCatching { file.appendText(item.json() + "\n") }
         }
+        publish()
+        return true
+    }
+
+    // ---------------------------------------------------------------- on-demand indexing
+
+    /** What the last "Index phone now" found. */
+    data class Report(
+        val time: Long, val notifications: List<Item>, val newNotifications: Int, val texts: List<Item>, val events: List<Item>,
+        val notifAccess: Boolean, val smsAccess: Boolean, val calendarAccess: Boolean,
+    )
+
+    private val _report = kotlinx.coroutines.flow.MutableStateFlow<Report?>(null)
+    val report: kotlinx.coroutines.flow.StateFlow<Report?> = _report
+
+    @Volatile private var snapTexts: List<Item>? = null
+    @Volatile private var snapEvents: List<Item>? = null
+    @Volatile private var snapAt = 0L
+
+    /** Re-reads current notifications, texts and calendar now (call off the main thread). */
+    fun reindex(): Report {
+        load()
+        val watcher = NotificationWatcher.instance
+        val added = watcher?.indexActive() ?: 0
+        val t = texts(); val e = calendar()
+        snapTexts = t; snapEvents = e; snapAt = System.currentTimeMillis()
+        val r = Report(snapAt, _items.value, added, t, e, watcher != null, has(Manifest.permission.READ_SMS), has(Manifest.permission.READ_CALENDAR))
+        _report.value = r
+        AppLog.d("index", "indexed: ${r.notifications.size} notifications ($added new), ${t.size} texts, ${e.size} calendar events")
+        return r
+    }
+
+    /** Texts + calendar from the last snapshot (refreshed when older than 10 minutes) — fast lookups. */
+    private fun snapshot(): List<Item> {
+        if (snapTexts == null || System.currentTimeMillis() - snapAt > 10 * 60_000L) {
+            snapTexts = texts(); snapEvents = calendar(); snapAt = System.currentTimeMillis()
+        }
+        return snapTexts.orEmpty() + snapEvents.orEmpty()
     }
 
     private fun Item.json() = JSONObject().put("ti", title).put("tx", text).put("t", time).put("a", app).toString()
 
     fun clear() {
         synchronized(notifs) { notifs.clear(); file.delete() }
+        publish()
     }
 
     // ---------------------------------------------------------------- search
@@ -141,7 +195,7 @@ class PersonalIndex(private val app: NovaApp) {
         if (qs.isEmpty()) return emptyList()
         load()
         val now = System.currentTimeMillis()
-        val pool = synchronized(notifs) { notifs.toList() } + texts() + calendar()
+        val pool = synchronized(notifs) { notifs.toList() } + snapshot()
         val scored = pool.mapNotNull { it ->
             val hay = TextNorm.basic("${it.title} ${it.text} ${it.app}")
             val words = hay.split(' ').toHashSet()
@@ -164,13 +218,14 @@ class PersonalIndex(private val app: NovaApp) {
         return scored.filter { it.second >= 0.55f }.sortedByDescending { it.second }.take(limit).map { it.first }
     }
 
-    /** Context block for the AI, or null if nothing relevant. */
-    fun contextFor(query: String): String? {
-        if (!app.settings[K.contextLookup]) return null
-        val hits = runCatching { search(query, 5) }.getOrDefault(emptyList())
-        if (hits.isEmpty()) return null
-        return "[Possibly relevant, found on the user's phone]\n" + hits.joinToString("\n") { "- " + it.line() }
+    /** Items to hand the AI with a request (empty when off or nothing relevant). */
+    fun contextFor(query: String): List<Item> {
+        if (!app.settings[K.contextLookup]) return emptyList()
+        return runCatching { search(query, 5) }.getOrDefault(emptyList())
     }
+
+    fun contextBlock(items: List<Item>): String =
+        "[Possibly relevant, found on the user's phone]\n" + items.joinToString("\n") { "- " + it.line() }
 
     companion object {
         private const val MAX = 1500

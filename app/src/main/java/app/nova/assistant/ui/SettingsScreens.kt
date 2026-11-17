@@ -17,8 +17,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.AlertDialog
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -445,15 +451,39 @@ fun MemoryScreen() {
     SettingsScroll {
         SwitchPref("Use memory", K.memoryEnabled, "Things you ask Nova to remember are given to the AI model in every conversation.")
         PrefSection("Personal index")
+        val report by app.index.report.collectAsState()
+        var indexing by remember { mutableStateOf(false) }
+        var showReport by remember { mutableStateOf(false) }
+        val scope = rememberCoroutineScope()
+        ActionPref(
+            if (indexing) "Indexing your phone…" else "Index phone now",
+            report?.let { r ->
+                "Last: ${java.text.SimpleDateFormat("MMM d, h:mm a", java.util.Locale.getDefault()).format(java.util.Date(r.time))} — " +
+                    "${r.notifications.size} notifications, ${r.texts.size} texts, ${r.events.size} events. Tap to run again and see them."
+            } ?: "Reads your notifications, texts and calendar right now and shows exactly what Nova can look things up in.",
+            enabled = !indexing,
+        ) {
+            indexing = true
+            scope.launch {
+                withContext(Dispatchers.IO) { runCatching { app.index.reindex() } }
+                indexing = false
+                showReport = true
+            }
+        }
+        if (indexing) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+        report?.let { r -> if (showReport) IndexReportDialog(r, onClose = { showReport = false }) }
         SwitchPref(
-            "Remember notifications for lookups", K.indexNotifications,
-            "Keeps the last 30 days of notifications privately on this phone so you can ask about them later (like \"what's the address the dentist sent\").",
+            "Remember notifications in the background", K.indexNotifications,
+            "Saves each notification as it arrives (kept 30 days, only on this phone) so you can ask about it later, like \"what's the address the dentist sent\". Off: notifications are only saved when you tap Index phone now.",
         )
         SwitchPref(
             "Give the AI relevant info automatically", K.contextLookup,
             "Searches your notifications, texts and calendar for each question and hands matches to the AI — faster answers, nothing leaves the phone.",
         )
-        ActionPref("Clear notification index", "${app.index.size()} notifications stored") { app.index.clear() }
+        val indexed by app.index.items.collectAsState()
+        var showIndex by remember { mutableStateOf(false) }
+        ActionPref("Notification index", "${indexed.size} saved — tap to view or delete") { showIndex = true }
+        if (showIndex) NotificationIndexDialog(onClose = { showIndex = false })
         PrefSection("Things Nova knows about you")
         if (facts.isEmpty()) SettingHint("Nothing yet. Say \"remember that my car is a blue Civic\".")
         facts.forEachIndexed { i, f ->
@@ -485,6 +515,117 @@ fun MemoryScreen() {
             HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
         }
     }
+}
+
+/** Everything in the notification index, newest first, each with an ✕ to delete it. */
+@Composable
+private fun NotificationIndexDialog(onClose: () -> Unit) {
+    val app = LocalContext.current.app
+    val items by app.index.items.collectAsState()
+    var confirmClear by remember { mutableStateOf(false) }
+    val fmt = remember { java.text.SimpleDateFormat("MMM d, h:mm a", java.util.Locale.getDefault()) }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Notification index (${items.size})") },
+        text = {
+            if (items.isEmpty()) Text("Nothing saved yet. New notifications are added as they arrive.")
+            else LazyColumn(Modifier.heightIn(max = 460.dp)) {
+                items(items.size, key = { i -> items[i].let { "${it.time}|${it.app}|${it.title}|${it.text.hashCode()}" } }) { i ->
+                    val it = items[i]
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                            Text(
+                                "${it.app.ifBlank { "Notification" }} · ${fmt.format(java.util.Date(it.time))}",
+                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (it.title.isNotBlank()) Text(it.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                            if (it.text.isNotBlank()) Text(it.text, style = MaterialTheme.typography.bodySmall, maxLines = 3)
+                        }
+                        IconButton(onClick = { app.index.remove(it) }) {
+                            Icon(painterResource(R.drawable.ic_close), "Delete", Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text("Done") } },
+        dismissButton = {
+            if (items.isNotEmpty()) TextButton(onClick = { confirmClear = true }) { Text("Clear all") }
+        },
+    )
+    if (confirmClear) AlertDialog(
+        onDismissRequest = { confirmClear = false },
+        title = { Text("Delete all ${items.size} saved notifications?") },
+        text = { Text("Nova will start saving again from new notifications. This can't be undone.") },
+        confirmButton = { TextButton(onClick = { app.index.clear(); confirmClear = false }) { Text("Delete all") } },
+        dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancel") } },
+    )
+}
+
+/** What "Index phone now" found: every notification, text and calendar event Nova can search. */
+@Composable
+private fun IndexReportDialog(r: app.nova.assistant.core.PersonalIndex.Report, onClose: () -> Unit) {
+    val app = LocalContext.current.app
+    val notifs by app.index.items.collectAsState()
+    var tab by remember { mutableStateOf(0) }
+    val fmt = remember { java.text.SimpleDateFormat("EEE MMM d, h:mm a", java.util.Locale.getDefault()) }
+    val tabs = listOf("Notifications" to notifs.size, "Texts" to r.texts.size, "Calendar" to r.events.size)
+    val list = when (tab) { 0 -> notifs; 1 -> r.texts; else -> r.events.sortedBy { kotlin.math.abs(it.time - r.time) } }
+    val missing = when (tab) {
+        0 -> if (!r.notifAccess) "Notification access is off, so Nova can't read notifications. Turn it on in Setup." else null
+        1 -> if (!r.smsAccess) "Nova doesn't have permission to read texts. Allow SMS in Setup." else null
+        else -> if (!r.calendarAccess) "Nova doesn't have permission to read your calendar. Allow it in Setup." else null
+    }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Indexed your phone") },
+        text = {
+            Column {
+                Text(
+                    "${notifs.size} notifications" + (if (r.newNotifications > 0) " (${r.newNotifications} new)" else "") +
+                        " · ${r.texts.size} texts (90 days) · ${r.events.size} events (last week to 2 months ahead). " +
+                        "All of it stays on this phone.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    tabs.forEachIndexed { i, (name, n) ->
+                        FilterChip(
+                            selected = tab == i, onClick = { tab = i },
+                            label = { Text("$name $n", maxLines = 1, style = MaterialTheme.typography.labelMedium) },
+                        )
+                    }
+                }
+                when {
+                    missing != null -> Text(missing, style = MaterialTheme.typography.bodyMedium)
+                    list.isEmpty() -> Text("Nothing here.", style = MaterialTheme.typography.bodyMedium)
+                    else -> LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                        items(list.size) { i ->
+                            val it = list[i]
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                                    val head = when (it.source) {
+                                        "sms" -> "Text ${it.title} · ${fmt.format(java.util.Date(it.time))}"
+                                        "calendar" -> "Calendar"
+                                        else -> "${it.app.ifBlank { "Notification" }} · ${fmt.format(java.util.Date(it.time))}"
+                                    }
+                                    Text(head, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (it.source != "sms" && it.title.isNotBlank()) Text(it.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                    if (it.text.isNotBlank()) Text(it.text, style = MaterialTheme.typography.bodySmall, maxLines = 3)
+                                }
+                                if (it.source == "notification") IconButton(onClick = { app.index.remove(it) }) {
+                                    Icon(painterResource(R.drawable.ic_close), "Delete", Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text("Done") } },
+    )
 }
 
 @Composable

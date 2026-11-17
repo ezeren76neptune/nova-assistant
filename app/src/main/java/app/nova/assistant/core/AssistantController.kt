@@ -46,6 +46,11 @@ class AssistantController(private val app: NovaApp) {
     private val ui = object : AgentUi {
         override fun streaming(text: String) = update { copy(streaming = text) }
         override fun status(text: String) = update { copy(status = text) }
+        override fun found(lines: List<String>) {
+            if (lines.isEmpty()) return
+            val more = if (lines.size > 1) "  (+${lines.size - 1} more)" else ""
+            addTurn(Who.INFO, "From your phone: " + lines.first().take(110) + more)
+        }
     }
 
     // ---- entry points -------------------------------------------------------------------------

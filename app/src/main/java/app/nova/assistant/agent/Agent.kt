@@ -19,6 +19,8 @@ import java.util.TimeZone
 interface AgentUi {
     fun streaming(text: String)
     fun status(text: String)
+    /** Things from the phone's personal index that were handed to the AI with this request. */
+    fun found(lines: List<String>) {}
 }
 
 /**
@@ -118,10 +120,13 @@ class Agent(private val app: NovaApp) {
         val system = Prompt.system(app)
         // personal context (notifications, texts, calendar) found by a fast local search — saves tool round-trips
         val found = app.index.contextFor(input)
-        if (found != null) AppLog.d("agent", "context: ${found.lines().size - 1} item(s) from the phone")
+        if (found.isNotEmpty()) {
+            AppLog.d("agent", "context: ${found.size} item(s) from the phone")
+            ui.found(found.map { it.line() })
+        }
         val first = buildString {
             if (conv.carryOver.isNotEmpty()) { append(conv.carryOver.joinToString("\n")); append("\n") }
-            found?.let { append(it).append("\n") }
+            if (found.isNotEmpty()) append(app.index.contextBlock(found)).append("\n")
             append(input)
         }
         conv.carryOver.clear()

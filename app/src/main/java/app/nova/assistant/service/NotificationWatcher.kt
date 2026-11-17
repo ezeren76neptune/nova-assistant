@@ -49,6 +49,11 @@ class NotificationWatcher : NotificationListenerService() {
         runCatching { active().filter(::isUseful).map(::info).forEach { app.index.addNotification(it.appLabel, it.title, it.text, it.time) } }
     }
 
+    /** Adds everything currently in the notification shade to the index; returns how many were new. */
+    fun indexActive(): Int = runCatching {
+        active().filter(::isUseful).map(::info).count { app.index.addNotification(it.appLabel, it.title, it.text, it.time, force = true) }
+    }.getOrDefault(0)
+
     /** Every new notification goes into Nova's private on-device index (Settings → Memory). */
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val s = sbn ?: return
