@@ -38,6 +38,12 @@ class DebugReceiver : BroadcastReceiver() {
             return
         }
         intent.getStringExtra("delword")?.let { context.app.customWords.remove(it); out("custom word removed: $it"); return }
+        intent.getStringExtra("search")?.let { q ->
+            val hits = context.app.index.search(q, 6)
+            out("search \"$q\": ${hits.size} hit(s), index has ${context.app.index.size()} notifications")
+            hits.forEach { out("  " + it.line().take(160)) }
+            return
+        }
         intent.getStringExtra("correct")?.let { out("correct: \"$it\" -> \"${context.app.customWords.correct(it)}\""); return }
         intent.getStringExtra("log")?.let { n ->
             val app = context.app

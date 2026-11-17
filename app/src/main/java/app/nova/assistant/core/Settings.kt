@@ -31,6 +31,7 @@ object K {
     val commandSameBreath = BoolPref("command_same_breath", true)
     val voskModelUrl = StrPref("vosk_model_url", "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip")
     val audioSource = StrPref("audio_source", "voice_recognition") // voice_recognition | mic | unprocessed | voice_communication
+    val wakeNeedsLead = BoolPref("wake_needs_lead", true)  // the phrase must start the utterance (not mid-sentence)
     val wakeWhilePlaying = StrPref("wake_while_playing", "strict") // strict | pause | normal — when the phone's speaker plays sound
     val wakeBeep = BoolPref("wake_beep", true)
     val wakeVibrate = BoolPref("wake_vibrate", true)
@@ -58,6 +59,10 @@ object K {
     val sttMaxSeconds = IntPref("stt_max_seconds", 15)
     val continuous = StrPref("continuous", "after_question") // never | after_question | always
     val duckMedia = BoolPref("duck_media", true)
+
+    // Personal index (local search over notifications, texts, calendar)
+    val indexNotifications = BoolPref("index_notifications", true)
+    val contextLookup = BoolPref("context_lookup", true)
 
     // Custom vocabulary (words Nova should hear right)
     val customWords = StrPref("custom_words", "[]")

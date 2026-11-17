@@ -20,6 +20,7 @@ Speech recognition for the wake word, the AI model, Voice ID and the device cont
 - [First-run setup](#first-run-setup)
 - [Choosing an AI model](#choosing-an-ai-model)
 - [Wake word & Voice ID](#wake-word--voice-id)
+- [Personal index](#personal-index)
 - [Custom words](#custom-words)
 - [Home Assistant](#home-assistant)
 - [Music, apps & the web](#music-apps--the-web)
@@ -57,7 +58,8 @@ Speech recognition for the wake word, the AI model, Voice ID and the device cont
 | **Phone settings** | "turn on wifi", "bluetooth off", "airplane mode on", "turn on the flashlight", "brightness to 30%", "dim the screen", "do not disturb on", "put my phone on vibrate", "dark mode on", "open battery settings" |
 | **Screen** | "what's on my screen?", "summarize this page", "tap sign in", "type hello there", "scroll down", "go back", "go home", "lock the phone", "take a screenshot" |
 | **Apps & web** | "open spotify", "search for best pizza near me", "go to wikipedia.org", "navigate to the airport", "walking directions to the park", "coffee near me", "take a selfie" |
-| **Info** | "what time is it", "what's the date", "what's 15% of 80", "weather tomorrow", "will it rain this weekend", "where am I", "what's on my calendar today", "add dentist Friday at 3pm" |
+| **Info** | "what time is it", "what's the date", "what's 15% of 80", "weather tomorrow", "will it rain this weekend", "where am I", "what's next on my calendar", "what's on my calendar today", "add dentist Friday at 3pm", "how much battery do my AirPods have" |
+| **Your stuff** | "directions to my dentist appointment", "what time is the party Sam texted about", "what was that code from the bank" (via the personal index) |
 | **Smart home** | "open the garage", "turn off the kitchen light", "set the bedroom light to 40%", "set the thermostat to 70", "run movie night", "lock the front door", "is the humidity switch on?", "turn off the living room lights" (passed to Home Assistant Assist) |
 | **Memory** | "remember my locker code is 4312", "what do you remember about me", "forget the locker code", "take a note buy milk", "read my notes" |
 | **Anything else** | Questions, explanations, writing, translations, follow-ups: the on-device model answers them and keeps the conversation going while the popup is open |
@@ -157,6 +159,7 @@ Other options:
   - *Precise* listens only for the phrase. It has the lowest battery use and fewest false wakes, but the words must exist in Vosk's vocabulary; Nova warns you if one doesn't.
   - *Free speech* transcribes everything and matches the phrase phonetically. It works for any made-up word and allows "hey nova set a timer" in one breath.
 - **Sensitivity, partial-result triggering, cooldown, mic source, beep / vibrate on wake.**
+- **Only at the start.** "Hey nova" must start what you say: noise before it is fine, but the phrase in the middle of a sentence (TV, conversations) is ignored. You can switch this off.
 - **Sound from the phone itself.** The wake mic uses Android's echo canceller and noise suppressor, so the phone's own playback is largely subtracted. While the phone plays sound through its speaker (not headphones or Bluetooth), the wake phrase must start what was heard: "hey nova" in the middle of a video or song is ignored. Alternatively, pause the wake word while the speaker plays (Wake word → "While the phone plays sound").
 - **Live test.** Shows what the wake engine hears, the mic level, and whether Android is silencing the mic.
 
@@ -166,6 +169,15 @@ Other options:
 3. From then on the wake word only fires if the voice matches. The panel shows each check's score (e.g. "72% match, needs 55%").
 
 Voice ID is a convenience filter, not a lock: a recording of you can pass it. That's why opening doors and unlocking always ask for confirmation.
+
+## Personal index
+
+Nova keeps a private, on-device index so it can answer about *your* stuff without thinking it through step by step, a bit like Siri's personal context:
+- **What's searched:** the last 30 days of notifications, captured as they arrive (they'd otherwise vanish when dismissed); your text messages (last 90 days); and your calendar (past week and next two months). Texts and calendar are read live.
+- **Automatic context:** each request is matched against the index with a fast keyword search, no AI call. The best hits go to the AI with your question ("possibly relevant: text from the dental office, *your appointment Tue 3 PM at 123 Main St*").
+- **`search_phone` tool:** the AI can also search the index itself when it needs more.
+- **Example:** "Get me directions to my dentist appointment" finds the address in your texts and opens Maps there.
+- **Privacy:** nothing leaves the phone. Turn the index or the auto-context off, or clear it, under Settings → Memory → Personal index.
 
 ## Custom words
 
@@ -267,7 +279,7 @@ Also see [dontkillmyapp.com](https://dontkillmyapp.com).
 | **Tools** | Turn each of the ~60 tools on or off |
 | **Popup** | Overlay vs full screen, auto-dismiss, tap outside to close, show on lock screen, text size, full history, accessibility button |
 | **Background & battery** | Start on boot, listen with screen off, only when charging, pause below a battery %, pause during calls, wake lock, minimized notification, phone-maker tips |
-| **Memory** | Facts Nova remembers, notes, recent conversation log |
+| **Memory** | Facts Nova remembers, notes, recent conversation log, personal index (notification capture, auto-context, clear) |
 | **Logs** | In-app diagnostic log (copy / clear) |
 
 ## Privacy & security

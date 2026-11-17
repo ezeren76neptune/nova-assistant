@@ -180,11 +180,13 @@ class WakeWordEngine(private val app: NovaApp) {
                         if (streakCount >= need && System.currentTimeMillis() > partialSuppressUntil && matchPartial(p, free)) {
                             // early guesses carry no confidence — re-decode the last 2 s with word confidences first
                             val strict = strictNow()
+                            val (needLead, unkCounts) = leadRule()
                             val (ok0, detail) = confirmFromBuffer(model, requireLead = strict)
-                            val ok = ok0 && (!strict || phraseLeads(p))
+                            val ok = ok0 && (!needLead || phraseLeads(p, unkCounts))
                             if (ok) trigger(null, "partial \"$p\", $detail${if (strict) ", speaker playing" else ""}")
                             else {
-                                AppLog.d("wake", "ignored a possible wake word: partial \"$p\", $detail")
+                                val why = if (ok0) "phrase not at the start" else detail
+                                AppLog.d("wake", "ignored a possible wake word: partial \"$p\", $why")
                                 partialSuppressUntil = System.currentTimeMillis() + 1500
                             }
                             rec.reset(); partialStreak = ""; streakCount = 0
@@ -336,9 +338,20 @@ class WakeWordEngine(private val app: NovaApp) {
     /** While the speaker plays, the phrase must start the utterance — "… hey nova" mid-talk is the TV, not you. */
     private fun strictNow() = app.settings[K.wakeWhilePlaying] == "strict" && speakerPlaying()
 
-    private fun phraseLeads(text: String): Boolean {
-        val t = text.replace("[unk]", " unk ").let { TextNorm.basic(it) }
+    /**
+     * Does the wake phrase start the utterance? [unkCounts]=false ignores unrecognised noise ([unk]) before it,
+     * but real words before the phrase ("…i really hey nova") mean it was said mid-sentence — usually TV or chatter.
+     */
+    private fun phraseLeads(text: String, unkCounts: Boolean = true): Boolean {
+        val raw = if (unkCounts) text.replace("[unk]", " unk ") else text.replace("[unk]", " ")
+        val t = TextNorm.basic(raw)
         return app.settings.wakePhrases().any { t == it || t.startsWith("$it ") }
+    }
+
+    /** Phrase must lead: always with the setting on, and strictly (noise counts too) while the speaker plays. */
+    private fun leadRule(): Pair<Boolean, Boolean> {
+        val playing = strictNow()
+        return (playing || app.settings[K.wakeNeedsLead]) to playing
     }
 
     @SuppressLint("MissingPermission")
@@ -381,8 +394,9 @@ class WakeWordEngine(private val app: NovaApp) {
         }
         // grammar mode: every word of the phrase must be confident
         val (phrase, conf) = phraseConfidence(o) ?: return
-        if (strictNow() && !phraseLeads(text)) {
-            AppLog.d("wake", "ignored a possible wake word while the speaker plays: heard \"$text\"")
+        val (needLead, unkCounts) = leadRule()
+        if (needLead && !phraseLeads(text, unkCounts)) {
+            AppLog.d("wake", "ignored a possible wake word (not at the start${if (unkCounts) ", speaker playing" else ""}): heard \"$text\"")
             return
         }
         val threshold = 0.9 - sensitivity() * 0.5

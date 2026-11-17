@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationManagerCompat
+import app.nova.assistant.app
 import app.nova.assistant.core.AppLog
 import app.nova.assistant.core.TextNorm
 
@@ -44,6 +45,15 @@ class NotificationWatcher : NotificationListenerService() {
         super.onListenerConnected()
         instance = this
         AppLog.d("notif", "notification listener connected")
+        // catch up on what's already in the shade
+        runCatching { active().filter(::isUseful).map(::info).forEach { app.index.addNotification(it.appLabel, it.title, it.text, it.time) } }
+    }
+
+    /** Every new notification goes into Nova's private on-device index (Settings → Memory). */
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        val s = sbn ?: return
+        if (!isUseful(s)) return
+        runCatching { val i = info(s); app.index.addNotification(i.appLabel, i.title, i.text, i.time) }
     }
 
     override fun onListenerDisconnected() {

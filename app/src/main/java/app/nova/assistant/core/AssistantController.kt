@@ -150,6 +150,7 @@ class AssistantController(private val app: NovaApp) {
         // fix words the recognizer is known to mishear (Settings → Custom words)
         val t = (if (voice) app.customWords.correct(text) else text).trim()
         if (voice && t != text.trim()) AppLog.d("ctl", "custom words: \"${text.trim()}\" → \"$t\"")
+        AppLog.d("ctl", (if (voice) "heard: " else "typed: ") + t.take(200))
         if (t.isEmpty()) return
         cancelDismiss()
         stopRecognizer()

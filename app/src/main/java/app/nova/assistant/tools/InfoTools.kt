@@ -137,6 +137,12 @@ object InfoTools {
     private val weekdays = listOf("sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday")
 
     /** Returns (start of day millis, spoken label). */
+    private fun sameDay(a: Long, b: Long): Boolean {
+        val ca = Calendar.getInstance().apply { timeInMillis = a }
+        val cb = Calendar.getInstance().apply { timeInMillis = b }
+        return ca.get(Calendar.YEAR) == cb.get(Calendar.YEAR) && ca.get(Calendar.DAY_OF_YEAR) == cb.get(Calendar.DAY_OF_YEAR)
+    }
+
     private fun dayStart(day: String): Pair<Long, String> {
         val d = day.lowercase().trim()
         val c = Calendar.getInstance()
@@ -304,48 +310,90 @@ object InfoTools {
             ok(msg, data = "lat=${loc.latitude}, lon=${loc.longitude}, accuracy=${loc.accuracy.roundToInt()}m, address=${line ?: "unknown"}")
         },
 
-        Tool("calendar_events", "day?:str today|tomorrow|YYYY-MM-DD|<weekday>, days?:int", "List calendar events", "Info", "Checking your calendar…") { a ->
+        Tool(
+            "calendar_events",
+            "day?:str next|today|tomorrow|YYYY-MM-DD|<weekday>, days?:int",
+            "Calendar events. day=next = what's coming up from right now (use for \"what's next\", \"my next meeting\")",
+            "Info", "Checking your calendar…",
+        ) { a ->
             requirePerms(Manifest.permission.READ_CALENDAR, why = "read your calendar")?.let { return@Tool it }
-            val dayStr = a.str("day", "date", "when") ?: "today"
-            val (start, label) = dayStart(dayStr)
-            val days = (a.int("days", "count", "range") ?: if (dayStr.lowercase().contains("week")) 7 else 1).coerceIn(1, 31)
-            val end = start + days * 86_400_000L
-            val b = CalendarContract.Instances.CONTENT_URI.buildUpon()
-            ContentUris.appendId(b, start)
-            ContentUris.appendId(b, end)
-            data class Ev(val title: String, val begin: Long, val allDay: Boolean, val location: String?)
-            val events = mutableListOf<Ev>()
-            ctx.contentResolver.query(
-                b.build(),
-                arrayOf(
-                    CalendarContract.Instances.TITLE, CalendarContract.Instances.BEGIN,
-                    CalendarContract.Instances.ALL_DAY, CalendarContract.Instances.EVENT_LOCATION,
-                ),
-                null, null, "${CalendarContract.Instances.BEGIN} ASC",
-            )?.use { c ->
-                while (c.moveToNext()) {
-                    val t = c.getString(0) ?: continue
-                    events += Ev(t, c.getLong(1), c.getInt(2) == 1, c.getString(3)?.takeIf { it.isNotBlank() })
+            val dayStr = (a.str("day", "date", "when") ?: "today").lowercase().trim()
+            val now = System.currentTimeMillis()
+            data class Ev(val title: String, val begin: Long, val end: Long, val allDay: Boolean, val location: String?)
+            fun query(from: Long, to: Long): List<Ev> {
+                val b = CalendarContract.Instances.CONTENT_URI.buildUpon()
+                ContentUris.appendId(b, from)
+                ContentUris.appendId(b, to)
+                val out = mutableListOf<Ev>()
+                ctx.contentResolver.query(
+                    b.build(),
+                    arrayOf(
+                        CalendarContract.Instances.TITLE, CalendarContract.Instances.BEGIN, CalendarContract.Instances.END,
+                        CalendarContract.Instances.ALL_DAY, CalendarContract.Instances.EVENT_LOCATION,
+                    ),
+                    null, null, "${CalendarContract.Instances.BEGIN} ASC",
+                )?.use { c ->
+                    while (c.moveToNext()) {
+                        val t = c.getString(0) ?: continue
+                        out += Ev(t, c.getLong(1), c.getLong(2), c.getInt(3) == 1, c.getString(4)?.takeIf { it.isNotBlank() })
+                    }
                 }
+                return out
             }
-            val multi = days > 1
             val wdShort = SimpleDateFormat("EEE", Locale.getDefault())
             val utcDay = SimpleDateFormat("EEE", Locale.getDefault()).apply { timeZone = TimeZone.getTimeZone("UTC") }
+            fun detail(e: Ev) = "${if (e.allDay) utcDay.format(Date(e.begin)) + " all day" else Fmt.dateTime(ctx, e.begin)} — ${e.title}${e.location?.let { " @ $it" } ?: ""}"
+            fun join(items: List<String>) = if (items.size == 1) items[0] else items.dropLast(1).joinToString(", ") + " and " + items.last()
+
+            // "what's next": from right now, looking ahead two weeks — today's remaining events come first
+            val upcoming = Regex("\\b(next|upcoming|coming up|soon|later|left|remaining)\\b").containsMatchIn(dayStr) &&
+                weekdays.none { dayStr.contains(it) } && !dayStr.contains("week")
+            if (upcoming) {
+                val all = query(now - 12 * 3_600_000L, now + 14 * 86_400_000L)
+                val timed = all.filter { !it.allDay && it.end > now }
+                val next = timed.ifEmpty { all.filter { it.allDay && it.end > now } }
+                if (next.isEmpty()) return@Tool ok("Nothing coming up on your calendar in the next two weeks.", data = "No upcoming events.", needsModel = true)
+                val first = next[0]
+                val msg = buildString {
+                    if (first.begin <= now && !first.allDay) append("Right now: ${first.title}, until ${Fmt.time(ctx, first.end)}.")
+                    else append("Your next event is ${first.title} ${if (first.allDay) "on ${utcDay.format(Date(first.begin))} (all day)" else Fmt.dateTime(ctx, first.begin)}${first.location?.let { " at $it" } ?: ""}.")
+                    // also mention what follows if it's the same day
+                    next.getOrNull(1)?.takeIf { !it.allDay && sameDay(it.begin, first.begin) }?.let {
+                        append(" After that, ${it.title} at ${Fmt.time(ctx, it.begin)}.")
+                    }
+                }
+                return@Tool ToolOutcome(msg, data = next.take(6).joinToString("\n") { detail(it) }, needsModel = true)
+            }
+
+            val (start, label) = dayStart(dayStr)
+            val days = (a.int("days", "count", "range") ?: if (dayStr.contains("week")) 7 else 1).coerceIn(1, 31)
+            val events = query(start, start + days * 86_400_000L)
+            val multi = days > 1
             fun spoken(e: Ev): String = when {
                 e.allDay -> "${e.title}${if (multi) " on ${utcDay.format(Date(e.begin))}" else ""} (all day)"
                 multi -> "${e.title} ${wdShort.format(Date(e.begin))} at ${Fmt.time(ctx, e.begin)}"
                 else -> "${e.title} at ${Fmt.time(ctx, e.begin)}"
             }
             if (events.isEmpty()) return@Tool ok("Nothing on your calendar $label.", data = "No events $label.", needsModel = true)
+            val data = events.joinToString("\n") { e -> (if (!e.allDay && e.end <= now) "(done) " else "") + detail(e) }
+            // today: lead with what's still ahead, not what already happened
+            if (!multi && sameDay(start, now)) {
+                val done = events.filter { !it.allDay && it.end <= now }
+                val left = events - done.toSet()
+                val msg = when {
+                    left.isEmpty() -> "Nothing else today. Earlier you had ${join(done.takeLast(3).map(::spoken))}."
+                    else -> {
+                        val head = left.take(4).map(::spoken)
+                        "You have ${left.size} ${if (done.isNotEmpty()) "more " else ""}event${if (left.size == 1) "" else "s"} today: ${join(head)}" +
+                            (if (left.size > 4) ", plus ${left.size - 4} more" else "") + "."
+                    }
+                }
+                return@Tool ToolOutcome(msg, data = data, needsModel = true)
+            }
             val head = events.take(4).map(::spoken)
-            val list = if (head.size == 1) head[0] else head.dropLast(1).joinToString(", ") + " and " + head.last()
             val more = if (events.size > 4) ", plus ${events.size - 4} more" else ""
             val n = events.size
-            val msg = "You have $n event${if (n == 1) "" else "s"} $label: $list$more."
-            val data = events.joinToString("\n") { e ->
-                "${if (e.allDay) utcDay.format(Date(e.begin)) + " all day" else Fmt.dateTime(ctx, e.begin)} — ${e.title}${e.location?.let { " @ $it" } ?: ""}"
-            }
-            ToolOutcome(msg, data = data, needsModel = true)
+            ToolOutcome("You have $n event${if (n == 1) "" else "s"} $label: ${join(head)}$more.", data = data, needsModel = true)
         },
 
         Tool(

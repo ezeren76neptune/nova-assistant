@@ -132,6 +132,10 @@ fun WakeScreen() {
             summary = "Higher triggers more easily (and more false alarms).",
             format = { "${(it * 100).toInt()}%" },
         )
+        SwitchPref(
+            "Only when the wake word starts what you say", K.wakeNeedsLead,
+            "Ignores \"hey nova\" in the middle of other talk (TV, conversations). Say it after a short pause.",
+        )
         ChoicePref(
             "While the phone plays sound", K.wakeWhilePlaying,
             listOf(
@@ -440,6 +444,16 @@ fun MemoryScreen() {
     var newFact by remember { mutableStateOf("") }
     SettingsScroll {
         SwitchPref("Use memory", K.memoryEnabled, "Things you ask Nova to remember are given to the AI model in every conversation.")
+        PrefSection("Personal index")
+        SwitchPref(
+            "Remember notifications for lookups", K.indexNotifications,
+            "Keeps the last 30 days of notifications privately on this phone so you can ask about them later (like \"what's the address the dentist sent\").",
+        )
+        SwitchPref(
+            "Give the AI relevant info automatically", K.contextLookup,
+            "Searches your notifications, texts and calendar for each question and hands matches to the AI — faster answers, nothing leaves the phone.",
+        )
+        ActionPref("Clear notification index", "${app.index.size()} notifications stored") { app.index.clear() }
         PrefSection("Things Nova knows about you")
         if (facts.isEmpty()) SettingHint("Nothing yet. Say \"remember that my car is a blue Civic\".")
         facts.forEachIndexed { i, f ->

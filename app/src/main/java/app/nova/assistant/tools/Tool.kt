@@ -121,7 +121,7 @@ class ToolContext(val app: NovaApp) {
 class ToolRegistry(private val app: NovaApp) {
     val all: List<Tool> by lazy {
         ClockTools.tools + CommTools.tools + NotificationTools.tools + DeviceTools.tools +
-            AppTools.tools + ScreenTools.tools + InfoTools.tools + MemoryTools.tools + HomeTools.tools + ControlTools.tools
+            AppTools.tools + ScreenTools.tools + InfoTools.tools + MemoryTools.tools + HomeTools.tools + BluetoothTools.tools + SearchTools.tools + ControlTools.tools
     }
     private val byName by lazy { all.associateBy { it.name } }
 

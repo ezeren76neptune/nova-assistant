@@ -116,8 +116,12 @@ class Agent(private val app: NovaApp) {
         }
         ui.status(if (app.llm.isReady()) "Thinking…" else "Loading model…")
         val system = Prompt.system(app)
+        // personal context (notifications, texts, calendar) found by a fast local search — saves tool round-trips
+        val found = app.index.contextFor(input)
+        if (found != null) AppLog.d("agent", "context: ${found.lines().size - 1} item(s) from the phone")
         val first = buildString {
             if (conv.carryOver.isNotEmpty()) { append(conv.carryOver.joinToString("\n")); append("\n") }
+            found?.let { append(it).append("\n") }
             append(input)
         }
         conv.carryOver.clear()
@@ -220,6 +224,8 @@ object Prompt {
                 - Times are 24-hour (hour 0-23). Durations are in seconds. Dates are YYYY-MM-DD HH:MM.
                 - Don't repeat a tool call that already succeeded. Lines in [brackets] are things that already happened.
                 - For questions you can answer yourself (facts, advice, writing, math explanations), just "say" the answer.
+                - When the user refers to something personal ("my appointment", "the restaurant Sam texted", "my package"), use the [Possibly relevant] lines if present, or search_phone / calendar_events, to find the details (address, time) before acting. For directions, call navigate with the actual address you found.
+                - The user's words come from speech recognition and may contain sound-alike mistakes ("cavity feeling" = cavity filling, "clawed" = Claude). Answer what they most likely meant; only ask if it's genuinely unclear.
 
                 TOOLS:
                 """.trimIndent()

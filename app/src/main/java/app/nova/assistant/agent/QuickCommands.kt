@@ -144,7 +144,7 @@ private class Parser(val app: NovaApp, input: String, val lastTool: String? = nu
         if (d.isEmpty()) return Q.Say("Yes? How can I help?")
         return dismiss() ?: followUp() ?: home() ?: timeDate() ?: timers() ?: reminders() ?: alarms() ?: calls() ?: messages() ?: readers()
             ?: flashlight() ?: ringer() ?: volume() ?: media() ?: play() ?: navigation() ?: search() ?: system()
-            ?: battery() ?: dnd() ?: toggles() ?: brightness() ?: camera() ?: memory() ?: weather() ?: location()
+            ?: accessoryBattery() ?: battery() ?: dnd() ?: toggles() ?: brightness() ?: camera() ?: memory() ?: weather() ?: location()
             ?: calendar() ?: listening() ?: screen() ?: calc() ?: open()
     }
 
@@ -620,12 +620,16 @@ private class Parser(val app: NovaApp, input: String, val lastTool: String? = nu
         else -> s.lowercase(Locale.US)
     }
 
+    /** "my dentist appointment", "the meeting", "Sam's party" — needs looking up, not a literal Maps search. */
+    private val vaguePlace = Regex("""\b(my|our|the|that|this|next|his|her|their)\b.*\b(appointment|appt|meeting|event|reservation|class|party|interview|flight|dinner|lunch|breakfast|game|concert|show|dentist|doctor|doctors|orthodontist|therapist|vet|haircut|practice|rehearsal|shift|pickup|pick up|delivery)\b|\b\w+'s (house|place|apartment|party)\b""")
+
     fun navigation(): Q? {
         if (full("""^(navigate|take me|drive|get me|bring me|go|head|directions|guide me)( back)?( to)? home$""")) return tool("navigate", "destination" to "home")
         if (full("""^(navigate|take me|drive|get me|directions|guide me)( back)?( to)? (work|the office|my office)$""")) return tool("navigate", "destination" to "work")
         rxi("""^(?:navigate|drive|take me|get me|bring me|guide me|route me|start navigation|give me directions|get directions|show me directions|directions|show me the way|how do i get|how do i go|walk me|find a route|find directions|walking directions|driving directions|transit directions)(?: me)?(?: back)?(?: (?:to|towards|for))?\s+(.+?)(?:\s+(?:by|on|using|via)\s+(car|foot|bike|bicycle|transit|bus|train|public transport|public transit|walking))?$""").find(rawT)?.let { m ->
             val dest = m.g(1).trim().removePrefix("to ").trim()
             if (dest.isEmpty()) return null
+            if (app.llm.isConfigured() && vaguePlace.containsMatchIn(dest.lowercase())) return null
             val modeWord = (m.g(2) + " " + d).lowercase(Locale.US)
             val mode = when {
                 Regex("""\b(walk|walking|foot)\b""").containsMatchIn(modeWord) -> "walking"
@@ -667,6 +671,14 @@ private class Parser(val app: NovaApp, input: String, val lastTool: String? = nu
             else -> null
         } ?: return null
         return tool("system_action", "action" to a)
+    }
+
+    /** "how much battery do my airpods have", "airpods battery", "check my headphones battery" */
+    fun accessoryBattery(): Q? {
+        if (!has("""\b(battery|batteries|charge|charged|percent|juice)\b""")) return null
+        val m = match("""\b(air ?pods?( pro| max)?|ear ?buds?|ear ?pods|buds|beats|head ?phones?|head ?set|watch|galaxy buds|pixel buds|bose|sony)\b""")
+            ?: return null
+        return tool("device_battery", "device" to m.g(1).replace(" ", ""))
     }
 
     fun battery(): Q? {
@@ -801,6 +813,12 @@ private class Parser(val app: NovaApp, input: String, val lastTool: String? = nu
     }
 
     fun calendar(): Q? {
+        // "what's next", "when's my next meeting", "what do I have left today" → from right now
+        if (full("""^(?:what's|whats|what is|when's|whens|when is)(?: the| my)? next(?: thing| event| meeting| appointment| class| item)?(?: on| in| for)?(?: my| the)?(?: calendar| schedule| agenda)?(?: today)?$""") ||
+            full("""^(?:what's|whats|what is)(?: the)? (?:next|coming up)(?: on my (?:calendar|schedule|agenda)| today| for me| for today)?$""") ||
+            full("""^(?:what do i have|what have i got|do i have anything|is there anything)(?: else)? (?:next|coming up|later|later today|left today|else today|left on my calendar)$""") ||
+            full("""^(?:what's|whats|what is) (?:left|remaining) (?:today|on my calendar|on my schedule)( today)?$""")
+        ) return tool("calendar_events", "day" to "next")
         val period = """(today|tomorrow|this week|the week|next week)"""
         val m = match("""^(?:what's|whats|what is|show me|read me|tell me|check|list)?(?: on)?(?: my| the)? (?:calendar|schedule|agenda|events|meetings|appointments)(?: for| on| like)?(?: $period)?$""")
             ?: match("""^what do i have(?: going on| planned| scheduled| on)?(?: $period)$""")

@@ -6,6 +6,7 @@ import app.nova.assistant.agent.Agent
 import app.nova.assistant.core.AppLog
 import app.nova.assistant.core.AssistantController
 import app.nova.assistant.core.CustomWords
+import app.nova.assistant.core.PersonalIndex
 import app.nova.assistant.core.K
 import app.nova.assistant.core.MemoryStore
 import app.nova.assistant.core.Settings
@@ -40,6 +41,7 @@ class NovaApp : Application() {
     lateinit var home: HomeAssistant; private set
     lateinit var voiceId: VoiceId; private set
     lateinit var customWords: CustomWords; private set
+    lateinit var index: PersonalIndex; private set
 
     override fun onCreate() {
         super.onCreate()
@@ -49,6 +51,7 @@ class NovaApp : Application() {
         settings = Settings(this)
         memory = MemoryStore(this)
         customWords = CustomWords(settings)
+        index = PersonalIndex(this)
         vosk = VoskModelManager(this)
         voiceId = VoiceId(this)
         wake = WakeWordEngine(this)
