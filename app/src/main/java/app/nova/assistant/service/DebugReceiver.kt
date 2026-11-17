@@ -38,6 +38,10 @@ class DebugReceiver : BroadcastReceiver() {
             return
         }
         intent.getStringExtra("delword")?.let { context.app.customWords.remove(it); out("custom word removed: $it"); return }
+        intent.getStringExtra("notifactions")?.let { pkg ->
+            out("actions for $pkg: " + (NotificationWatcher.instance?.actionTitles(pkg) ?: "listener off"))
+            return
+        }
         intent.getStringExtra("reindex")?.let {
             val r = context.app.index.reindex()
             out("reindex: ${r.notifications.size} notifications (${r.newNotifications} new, access=${r.notifAccess}), ${r.texts.size} texts (sms=${r.smsAccess}), ${r.events.size} events (cal=${r.calendarAccess})")

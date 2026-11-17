@@ -1,5 +1,6 @@
 package app.nova.assistant.agent
 
+import app.nova.assistant.tools.WebSearch
 import app.nova.assistant.NovaApp
 import app.nova.assistant.core.AppLog
 import app.nova.assistant.core.K
@@ -512,6 +513,13 @@ private class Parser(val app: NovaApp, input: String, val lastTool: String? = nu
     /** "set it to 50%", "a bit more", "turn it down" right after a volume/brightness change. */
     fun followUp(): Q? {
         val lt = lastTool ?: return null
+        if (lt == "web_search") {
+            // "open it" / "show me the page" after a spoken search
+            if (!full("""^(?:ok(?:ay)? )?(?:open|show|pull up|bring up|go to)(?: me)?(?: it| that| this| them| the (?:page|link|site|website|article|results?|source|first (?:one|result|link)))?(?: (?:in|on) (?:the |my )?(?:browser|phone|screen))?(?: please)?$""")) return null
+            val last = WebSearch.last ?: return null
+            val url = (last.pages.firstOrNull()?.first ?: last.hits.firstOrNull())?.url
+            return if (url != null && !has("""\bresults?\b""")) tool("open_url", "url" to url) else tool("web_search", "query" to last.query, "open" to true)
+        }
         if (lt != "volume" && lt != "brightness") return null
         if (words() > 7) return null
         if (has("""\b(timer|alarm|call|text|message|remind|play|open|weather|search|navigate|note|flashlight|wifi|bluetooth)\b""")) return null
@@ -649,11 +657,19 @@ private class Parser(val app: NovaApp, input: String, val lastTool: String? = nu
     }
 
     fun search(): Q? {
+        rxi("""^(?:open|do|start|pull up) (?:a |an )?(?:web |google |internet )?search (?:for|on|about) (.+)$""").find(rawT)?.let {
+            return tool("web_search", "query" to it.g(1).trim(), "open" to true)
+        }
         val m = rxi("""^(?:search(?: the web| google| online| the internet| the net)?(?: for)?|google|look up|lookup|web search(?: for)?|bing|duckduckgo|find (?:information|info|out) (?:on|about))\s+(.+)$""").find(rawT)
             ?: return null
         val q = m.g(1).trim()
         if (q.isEmpty() || Regex("""'s (phone )?number|\bcontact\b""").containsMatchIn(q.lowercase(Locale.US))) return null
-        return tool("web_search", "query" to q)
+        // "look it up" / "search that" refers to the conversation — let the AI fill in what "it" is
+        if (Regex("""^(it|that|this|them|those)( up| online| for me| on the (web|internet))*$""").matches(q.lowercase(Locale.US))) return null
+        // "search for X in the browser" / "open a search for X"
+        val inBrowser = Regex("""\s+(in|on|with) (the |my )?(browser|chrome|firefox|google)$""").find(q)
+        return if (inBrowser != null) tool("web_search", "query" to q.substring(0, inBrowser.range.first), "open" to true)
+        else tool("web_search", "query" to q)
     }
 
     fun system(): Q? {

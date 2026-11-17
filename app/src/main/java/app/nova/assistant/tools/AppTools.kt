@@ -179,6 +179,31 @@ object AppTools {
 
     private fun youtubeUrl(q: String) = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(q)}"))
 
+    /** Opens a search in the browser (or the Google app), per Settings → Web search. */
+    fun ToolContext.openSearch(q: String): ToolOutcome {
+        val engine = settings[K.searchEngine]
+        val browser = defaultBrowser(ctx)
+        when (engine) {
+            // default: the phone's default browser, with that browser's own search engine — no app picker
+            "browser" -> if (browser != null &&
+                launch(Intent(Intent.ACTION_WEB_SEARCH).setPackage(browser).putExtra(SearchManager.QUERY, q))
+            ) return ToolOutcome("Searching for $q.", dismiss = true)
+            // Google app (falls back to Android's picker if it isn't there)
+            "system" -> if (launch(Intent(Intent.ACTION_WEB_SEARCH).setPackage("com.google.android.googlequicksearchbox").putExtra(SearchManager.QUERY, q)) ||
+                launch(Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, q))
+            ) return ToolOutcome("Searching for $q.", dismiss = true)
+        }
+        val base = when (engine) {
+            "duckduckgo" -> "https://duckduckgo.com/?q="
+            "bing" -> "https://www.bing.com/search?q="
+            "perplexity" -> "https://www.perplexity.ai/search?q="
+            else -> "https://www.google.com/search?q="
+        }
+        val view = Intent(Intent.ACTION_VIEW, Uri.parse(base + Uri.encode(q))).addCategory(Intent.CATEGORY_BROWSABLE)
+        return if ((browser != null && launch(Intent(view).setPackage(browser))) || launch(view)) ToolOutcome("Searching for $q.", dismiss = true)
+        else fail("I couldn't open a browser.")
+    }
+
     val tools: List<Tool> = listOf(
         Tool("open_app", "name:str", "Open an app by name", "Apps", "Opening…") { a ->
             val name = a.str("name", "app", "app_name", "package") ?: return@Tool fail("Which app?")
@@ -197,29 +222,21 @@ object AppTools {
             fail("I couldn't find an app called $name.")
         },
 
-        Tool("web_search", "query:str", "Search the web", "Apps", "Searching…") { a ->
+        Tool(
+            "web_search", "query:str, open?:bool",
+            "Look something up on the internet and get the results back to explain to the user. open=true only if they want the browser",
+            "Apps", "Searching the web…",
+        ) { a ->
             val q = a.str("query", "q", "text", "search") ?: return@Tool fail("What should I search for?")
-            val engine = settings[K.searchEngine]
-            val browser = defaultBrowser(ctx)
-            when (engine) {
-                // default: the phone's default browser, with that browser's own search engine — no app picker
-                "browser" -> if (browser != null &&
-                    launch(Intent(Intent.ACTION_WEB_SEARCH).setPackage(browser).putExtra(SearchManager.QUERY, q))
-                ) return@Tool ToolOutcome("Searching for $q.", dismiss = true)
-                // Google app (falls back to Android's picker if it isn't there)
-                "system" -> if (launch(Intent(Intent.ACTION_WEB_SEARCH).setPackage("com.google.android.googlequicksearchbox").putExtra(SearchManager.QUERY, q)) ||
-                    launch(Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, q))
-                ) return@Tool ToolOutcome("Searching for $q.", dismiss = true)
+            if (a.bool("open", "browser") != true && settings[K.searchMode] == "speak") {
+                val r = WebSearch.lookup(q)
+                if (r.hits.isEmpty()) return@Tool fail("I couldn't get search results right now. Check the connection, or say \"open a search for $q\" to use the browser.")
+                return@Tool ToolOutcome(
+                    r.plainAnswer(), data = r.forModel(), needsModel = true, preferModel = true,
+                    note = "Searched the web: ${r.sources()}",
+                )
             }
-            val base = when (engine) {
-                "duckduckgo" -> "https://duckduckgo.com/?q="
-                "bing" -> "https://www.bing.com/search?q="
-                "perplexity" -> "https://www.perplexity.ai/search?q="
-                else -> "https://www.google.com/search?q="
-            }
-            val view = Intent(Intent.ACTION_VIEW, Uri.parse(base + Uri.encode(q))).addCategory(Intent.CATEGORY_BROWSABLE)
-            if ((browser != null && launch(Intent(view).setPackage(browser))) || launch(view)) ToolOutcome("Searching for $q.", dismiss = true)
-            else fail("I couldn't open a browser.")
+            openSearch(q)
         },
 
         Tool("open_url", "url:str", "Open a website", "Apps") { a ->
@@ -227,7 +244,9 @@ object AppTools {
             url = url.trim()
             if (!url.contains("://")) url = "https://" + url.replace(" ", "")
             val uri = Uri.parse(url)
-            if (launch(Intent(Intent.ACTION_VIEW, uri))) ToolOutcome("Opening ${uri.host ?: url}.", dismiss = true)
+            val view = Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE)
+            val browser = defaultBrowser(ctx)
+            if ((browser != null && launch(Intent(view).setPackage(browser))) || launch(view)) ToolOutcome("Opening ${uri.host?.removePrefix("www.") ?: url}.", dismiss = true)
             else fail("I couldn't open that link.")
         },
 

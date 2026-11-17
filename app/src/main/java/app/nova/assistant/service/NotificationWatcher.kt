@@ -49,6 +49,28 @@ class NotificationWatcher : NotificationListenerService() {
         runCatching { active().filter(::isUseful).map(::info).forEach { app.index.addNotification(it.appLabel, it.title, it.text, it.time) } }
     }
 
+    /** Titles of the buttons on an app's current notifications (for diagnosing / automating). */
+    fun actionTitles(pkg: String): List<String> = runCatching {
+        activeNotifications.orEmpty().filter { it.packageName == pkg }.flatMap { sbn ->
+            sbn.notification.actions.orEmpty().map { "${sbn.tag ?: sbn.id}: ${it.title}" }
+        }
+    }.getOrDefault(emptyList())
+
+    /**
+     * Presses a button on another app's notification, e.g. "Reset" on the Clock app's running-timer notification.
+     * [pkg] picks the apps; [titles] are tried in order (first one found wins). Returns the button pressed, or null.
+     */
+    fun pressAction(pkg: (String) -> Boolean, titles: List<Regex>, tag: Regex? = null): String? {
+        val list = runCatching { activeNotifications.orEmpty().filter { pkg(it.packageName) && (tag == null || tag.containsMatchIn("${it.tag} ${it.notification.channelId}")) } }
+            .getOrDefault(emptyList())
+        for (t in titles) for (sbn in list) {
+            val a = sbn.notification.actions.orEmpty().firstOrNull { it.title != null && t.containsMatchIn(it.title.toString()) } ?: continue
+            return runCatching { a.actionIntent.send(); a.title.toString() }
+                .onFailure { AppLog.d("notif", "pressing ${a.title} failed", it) }.getOrNull()
+        }
+        return null
+    }
+
     /** Adds everything currently in the notification shade to the index; returns how many were new. */
     fun indexActive(): Int = runCatching {
         active().filter(::isUseful).map(::info).count { app.index.addNotification(it.appLabel, it.title, it.text, it.time, force = true) }

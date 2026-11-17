@@ -48,6 +48,7 @@ class NovaApp : Application() {
         instance = this
         // The on-device model runs in its own ":llm" process; it needs none of the assistant machinery.
         if (processName().endsWith(":llm")) return
+        AppLog.init(filesDir)
         settings = Settings(this)
         memory = MemoryStore(this)
         customWords = CustomWords(settings)

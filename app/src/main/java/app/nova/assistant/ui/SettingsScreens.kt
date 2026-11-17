@@ -238,7 +238,8 @@ fun SpeechScreen() {
             "Keep listening after a reply", K.continuous,
             listOf(
                 "never" to "Never",
-                "after_question" to "When the assistant asks a question",
+                "after_question" to "Only when Nova asks a question or offers something",
+                "conversation" to "In a conversation (not after simple tasks)",
                 "always" to "Always (hands-free conversation)",
             ),
         )
@@ -305,7 +306,14 @@ fun ActionsScreen() {
 
         PrefSection("Apps")
         ChoicePref(
-            "Web search", K.searchEngine,
+            "Web search results", K.searchMode,
+            listOf(
+                "speak" to "Tell me what was found (spoken, no browser)",
+                "browser" to "Open them in the browser",
+            ),
+        )
+        ChoicePref(
+            "Browser search engine", K.searchEngine,
             listOf(
                 "browser" to "Default browser (its own search engine)",
                 "system" to "Google app",

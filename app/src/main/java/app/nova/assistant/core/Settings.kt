@@ -57,7 +57,7 @@ object K {
     val sttPreferOffline = BoolPref("stt_prefer_offline", false)
     val sttSilenceMs = IntPref("stt_silence_ms", 1200)
     val sttMaxSeconds = IntPref("stt_max_seconds", 15)
-    val continuous = StrPref("continuous", "after_question") // never | after_question | always
+    val continuous = StrPref("continuous", "conversation") // never | after_question | conversation | always
     val duckMedia = BoolPref("duck_media", true)
 
     // Personal index (local search over notifications, texts, calendar)
@@ -80,7 +80,7 @@ object K {
     val modelPath = StrPref("model_path", "")
     val llmGpu = BoolPref("llm_gpu", true)
     val llmContext = IntPref("llm_context", 4096)
-    val llmMaxOutput = IntPref("llm_max_output", 320)
+    val llmMaxOutput = IntPref("llm_max_output", 512)
     val llmTemperature = FloatPref("llm_temperature", 0.3f)
     val llmTopK = IntPref("llm_top_k", 40)
     val llmTopP = FloatPref("llm_top_p", 0.95f)
@@ -111,6 +111,7 @@ object K {
     val autoSend = BoolPref("auto_send", true)
     val timerImpl = StrPref("timer_impl", "clock")            // clock | builtin
     val alarmSkipUi = BoolPref("alarm_skip_ui", true)
+    val searchMode = StrPref("search_mode", "speak")          // speak (read results out) | browser
     val searchEngine = StrPref("search_engine", "browser")    // browser | system | google | duckduckgo | bing | perplexity
     val musicApp = StrPref("music_app", "auto")               // auto | ask | spotify | youtube_music | youtube | apple_music…
     val countryCode = StrPref("country_code", "1")
@@ -157,6 +158,13 @@ class Settings(ctx: Context) {
     }
 
     init {
+        // one-time: the old default only listened after a "?" — move it to the conversation mode
+        if (!prefs.getBoolean("mig_continuous_2", false)) {
+            prefs.edit {
+                if (prefs.getString("continuous", null) == "after_question") putString("continuous", "conversation")
+                putBoolean("mig_continuous_2", true)
+            }
+        }
         prefs.registerOnSharedPreferenceChangeListener(listener)
     }
 

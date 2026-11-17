@@ -21,6 +21,8 @@ interface AgentUi {
     fun status(text: String)
     /** Things from the phone's personal index that were handed to the AI with this request. */
     fun found(lines: List<String>) {}
+    /** A side note for the popup (e.g. which websites a search used). */
+    fun info(text: String) {}
 }
 
 /**
@@ -87,8 +89,19 @@ class Agent(private val app: NovaApp) {
                 ui.status(tool.status)
                 conv.lastTool = tool.name
                 val o = app.tools.run(tool.name, q.args)
-                conv.carryOver += "[Earlier the user said \"$input\" and I ran ${tool.name} → \"${o.message.take(300)}\"]"
-                fromOutcome(o, conv, ui)
+                o.note?.let(ui::info)
+                if (o.preferModel && o.success && o.data != null && s[K.summarizeResults] && app.llm.isConfigured()) {
+                    // e.g. "search for X": let the AI explain the results instead of reading a raw snippet
+                    conv.llmMessages += ChatMsg.user(takeCarryOver(conv) + input)
+                    conv.llmMessages += ChatMsg.assistant(JSONObject().put("tool", tool.name).put("args", q.args).toString())
+                    conv.llmMessages += ChatMsg.user(resultMessage(tool.name, o))
+                    ui.status("Thinking…")
+                    // if the model fails, still read out what was found
+                    runModel(conv, ui, startStep = 1).let { r -> if (r.error) AgentResult(o.message, conversational = true) else r }
+                } else {
+                    conv.carryOver += "[Earlier the user said \"$input\" and I ran ${tool.name} → \"${o.message.take(300)}\"]"
+                    fromOutcome(o, conv, ui)
+                }
             }
         }
     }
@@ -117,7 +130,6 @@ class Agent(private val app: NovaApp) {
             )
         }
         ui.status(if (app.llm.isReady()) "Thinking…" else "Loading model…")
-        val system = Prompt.system(app)
         // personal context (notifications, texts, calendar) found by a fast local search — saves tool round-trips
         val found = app.index.contextFor(input)
         if (found.isNotEmpty()) {
@@ -125,14 +137,32 @@ class Agent(private val app: NovaApp) {
             ui.found(found.map { it.line() })
         }
         val first = buildString {
-            if (conv.carryOver.isNotEmpty()) { append(conv.carryOver.joinToString("\n")); append("\n") }
+            append(takeCarryOver(conv))
             if (found.isNotEmpty()) append(app.index.contextBlock(found)).append("\n")
             append(input)
         }
-        conv.carryOver.clear()
         conv.llmMessages += ChatMsg.user(first)
+        return runModel(conv, ui)
+    }
+
+    private fun takeCarryOver(conv: Conversation): String {
+        if (conv.carryOver.isEmpty()) return ""
+        return conv.carryOver.joinToString("\n", postfix = "\n").also { conv.carryOver.clear() }
+    }
+
+    private fun resultMessage(tool: String, o: ToolOutcome): String {
+        val data = (o.data ?: o.message).take(3000)
+        val how = if (tool == "web_search")
+            "Now explain what was found, in your own words, with {\"say\":...}: answer the user's actual question (in depth if they asked for detail) and mention the site you got it from."
+        else "Now answer the user's request with {\"say\":...} (or call another tool if needed)."
+        return "TOOL_RESULT $tool: $data\n$how"
+    }
+
+    /** The model's turn(s): generate, run tool calls, until it says something. */
+    private suspend fun runModel(conv: Conversation, ui: AgentUi, startStep: Int = 0): AgentResult {
+        val system = Prompt.system(app)
         val maxSteps = s[K.maxToolSteps].coerceIn(1, 8)
-        for (step in 0 until maxSteps) {
+        for (step in startStep until maxSteps.coerceAtLeast(startStep + 1)) {
             val raw = try {
                 app.llm.generate(conv.id, system, conv.llmMessages.toList()) { partial ->
                     ui.streaming(Prompt.previewSay(partial))
@@ -151,7 +181,7 @@ class Agent(private val app: NovaApp) {
             when (val p = ReplyParser.parse(raw)) {
                 is ReplyParser.Parsed.Say -> {
                     val text = p.text.ifBlank { "Okay." }
-                    return AgentResult(text, expectReply = text.trimEnd().endsWith("?"))
+                    return AgentResult(text, expectReply = text.trimEnd().endsWith("?"), conversational = true)
                 }
                 is ReplyParser.Parsed.Call -> {
                     val tool = app.tools[p.name]
@@ -162,6 +192,7 @@ class Agent(private val app: NovaApp) {
                     ui.status(if (s[K.showToolCalls]) "${tool.status} (${tool.name})" else tool.status)
                     conv.lastTool = tool.name
                     val o = app.tools.run(tool.name, p.args)
+                    o.note?.let(ui::info)
                     when {
                         o.confirm != null -> {
                             conv.carryOver += "[${tool.name} is waiting for the user to confirm: ${o.confirm.question}]"
@@ -176,8 +207,7 @@ class Agent(private val app: NovaApp) {
                             return AgentResult(o.message, dismiss = true, error = !o.success, quiet = o.quiet)
                         }
                         o.needsModel && s[K.summarizeResults] && step < maxSteps - 1 -> {
-                            val data = (o.data ?: o.message).take(3000)
-                            conv.llmMessages += ChatMsg.user("TOOL_RESULT ${tool.name}: $data\nNow answer the user's request with {\"say\":...} (or call another tool if needed).")
+                            conv.llmMessages += ChatMsg.user(resultMessage(tool.name, o))
                             ui.status("Thinking…")
                         }
                         !o.success && step < maxSteps - 1 && o.message.isNotBlank() && !s[K.summarizeResults] -> {
@@ -224,11 +254,13 @@ object Prompt {
                 After a tool runs you receive TOOL_RESULT; then reply with {"say":...} or call another tool.
                 Rules:
                 - Use a tool whenever the user asks you to do something on the phone. Never claim you did something without calling the tool.
-                - "say" is spoken aloud: 1-2 short natural sentences, no markdown, no lists, no emojis.
+                - "say" is spoken aloud: plain natural sentences, no markdown, no lists, no emojis. Usually 1-2 short sentences; when the user asks you to explain, go in depth, or tell them about something, give a full spoken explanation (up to about 8 sentences).
                 - If required information is missing (who to text, what to say), ask with "say".
                 - Times are 24-hour (hour 0-23). Durations are in seconds. Dates are YYYY-MM-DD HH:MM.
                 - Don't repeat a tool call that already succeeded. Lines in [brackets] are things that already happened.
                 - For questions you can answer yourself (facts, advice, writing, math explanations), just "say" the answer.
+                - You can explain any topic, including health, medical and dental procedures, medicines, law and money, clearly like a knowledgeable friend. Never refuse with "I can't give medical advice" or "I'm not a medical professional" — even when they ask for advice, give practical general guidance, then at most one short line about when to see a doctor or dentist.
+                - If you don't know, or it needs current information (news, scores, prices, opening hours, recent events), call web_search right away instead of offering to. Then explain the TOOL_RESULT in your own words and name the site it came from. Only pass open=true if the user asks to see the page or browser.
                 - When the user refers to something personal ("my appointment", "the restaurant Sam texted", "my package"), use the [Possibly relevant] lines if present, or search_phone / calendar_events, to find the details (address, time) before acting. For directions, call navigate with the actual address you found.
                 - The user's words come from speech recognition and may contain sound-alike mistakes ("cavity feeling" = cavity filling, "clawed" = Claude). Answer what they most likely meant; only ask if it's genuinely unclear.
 
@@ -243,6 +275,8 @@ object Prompt {
                 {"tool":"set_timer","args":{"seconds":120}}
                 User: text Sam that I'm on my way
                 {"tool":"send_text","args":{"contact":"Sam","message":"I'm on my way"}}
+                User: can you give me medical advice about a toothache?
+                {"say":"Sure. Rinse with warm salt water, take ibuprofen or acetaminophen as the label says, and hold a cold pack on your cheek for 15 minutes at a time. Skip very hot, cold or sugary food. If it lasts more than a day or two, or you get swelling or a fever, see a dentist soon."}
                 User: why is the sky blue?
                 {"say":"Sunlight scatters off air molecules, and blue light scatters the most, so the sky looks blue."}
                 User: what's on my screen?
@@ -251,6 +285,8 @@ object Prompt {
                 {"say":"You're in your inbox. The top message is from Jane asking about lunch tomorrow."}
                 User: will I need an umbrella tomorrow?
                 {"tool":"weather","args":{"day":"tomorrow"}}
+                User: who won the World Series this year?
+                {"tool":"web_search","args":{"query":"World Series winner this year"}}
                 """.trimIndent()
             )
             if (app.home.isConfigured() && app.home.entities.isNotEmpty()) {

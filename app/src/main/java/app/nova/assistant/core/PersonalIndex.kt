@@ -218,16 +218,25 @@ class PersonalIndex(private val app: NovaApp) {
         return scored.filter { it.second >= 0.55f }.sortedByDescending { it.second }.take(limit).map { it.first }
     }
 
-    /** Items to hand the AI with a request (empty when off or nothing relevant). */
+    /**
+     * Items to hand the AI with a request (empty when off or nothing relevant). Only for requests about the
+     * user's own stuff — "who won the World Series" must go to the web, not to a text that mentions it.
+     */
     fun contextFor(query: String): List<Item> {
         if (!app.settings[K.contextLookup]) return emptyList()
+        if (!PERSONAL.containsMatchIn(TextNorm.basic(query))) return emptyList()
         return runCatching { search(query, 5) }.getOrDefault(emptyList())
     }
 
     fun contextBlock(items: List<Item>): String =
-        "[Possibly relevant, found on the user's phone]\n" + items.joinToString("\n") { "- " + it.line() }
+        "[Possibly relevant, found on the user's phone — use only if it actually answers the request]\n" + items.joinToString("\n") { "- " + it.line() }
 
     companion object {
+        private val PERSONAL = Regex(
+            "\\b(my|mine|me|i|im|ive|id|our|ours|us|we|sent|send|texted|text|texts|message|messages|messaged|email|emailed|mail|" +
+                "notification|notifications|said|told|asked|appointment|appt|reservation|booking|order|package|delivery|shipment|" +
+                "tracking|flight|meeting|event|party|code|address|confirmation|bill|payment|receipt|invite|invitation)\\b"
+        )
         private const val MAX = 1500
         private const val KEEP_DAYS = 30
         private val STOP = setOf(

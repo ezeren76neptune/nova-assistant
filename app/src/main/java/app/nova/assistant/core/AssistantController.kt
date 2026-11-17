@@ -46,6 +46,7 @@ class AssistantController(private val app: NovaApp) {
     private val ui = object : AgentUi {
         override fun streaming(text: String) = update { copy(streaming = text) }
         override fun status(text: String) = update { copy(status = text) }
+        override fun info(text: String) = addTurn(Who.INFO, text)
         override fun found(lines: List<String>) {
             if (lines.isEmpty()) return
             val more = if (lines.size > 1) "  (+${lines.size - 1} more)" else ""
@@ -265,11 +266,21 @@ class AssistantController(private val app: NovaApp) {
         if (!userText.startsWith("(")) app.memory.logExchange(userText, r.reply)
         update { copy(streaming = "", status = "", pending = r.pending?.let { PendingUi(it.question, it.confirmLabel) }) }
 
-        val listenAgain = !r.dismiss && lastInputVoice && when (s[K.continuous]) {
+        val asks = r.expectReply || r.pending != null || invitesReply(r.reply)
+        val mode = s[K.continuous]
+        val wantsFollowUp = !r.dismiss && when (mode) {
             "always" -> true
-            "after_question" -> r.expectReply || r.pending != null || r.reply.trimEnd().endsWith("?")
+            // a back-and-forth with the AI, a question or an offer — but not after a finished task
+            "conversation" -> asks || (r.conversational && !r.error)
+            "after_question" -> asks
             else -> false
         }
+        val listenAgain = wantsFollowUp && lastInputVoice
+        if (!r.dismiss) AppLog.d("ctl", "follow-up ($mode): " + when {
+            listenAgain -> "listening"
+            wantsFollowUp -> "would listen, but this was typed"
+            else -> "not listening (task done)"
+        })
         val next: () -> Unit = {
             when {
                 r.dismiss -> dismiss("action done")
@@ -295,6 +306,14 @@ class AssistantController(private val app: NovaApp) {
                 }
             }
         } else next()
+    }
+
+    /** A question or an offer anywhere near the end ("…I can look it up online.", "Want me to…?"). */
+    private fun invitesReply(reply: String): Boolean {
+        val tail = reply.trim().takeLast(220).lowercase()
+        if (tail.contains('?')) return true
+        return Regex("\\b(would you like|want me to|do you want|should i|shall i|let me know|if you'?d like|if you want|just say|just ask|" +
+            "i can (also )?(look|search|check|find|tell|explain|give|help|read|open|set|send|call|go|walk))\\b").containsMatchIn(tail)
     }
 
     /** Listening ended with nothing said: the recognizer already waited out the silence, so close right away. */

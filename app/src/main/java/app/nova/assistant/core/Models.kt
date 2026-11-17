@@ -7,12 +7,27 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** In-app ring-buffer log (Settings → Logs) so problems can be diagnosed on the phone. */
+/**
+ * In-app ring-buffer log (Settings → Logs) so problems can be diagnosed on the phone. Also kept in a small
+ * private file, so it survives the app being killed or updated.
+ */
 object AppLog {
     private val buf = ArrayDeque<String>()
     private val _lines = MutableStateFlow<List<String>>(emptyList())
     val lines: StateFlow<List<String>> = _lines
     private val fmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+    @Volatile private var file: java.io.File? = null
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "applog").apply { isDaemon = true } }
+
+    /** Main process only: reload the saved log and keep writing to it. */
+    fun init(dir: java.io.File) {
+        val f = java.io.File(dir, "nova_log.txt")
+        synchronized(this) {
+            runCatching { if (f.exists()) f.readLines().takeLast(600).forEach { buf.addLast(it) } }
+            file = f
+        }
+        d("app", "=== Nova started ${SimpleDateFormat("EEE MMM d", Locale.US).format(Date())} ===")
+    }
 
     @Synchronized
     fun d(tag: String, msg: String, t: Throwable? = null) {
@@ -22,11 +37,20 @@ object AppLog {
         buf.addLast(line)
         while (buf.size > 600) buf.removeFirst()
         _lines.value = buf.toList()
+        file?.let { f ->
+            writer.execute {
+                runCatching {
+                    f.appendText(line.replace('\n', ' ') + "\n")
+                    if (f.length() > 300_000) f.writeText(f.readLines().takeLast(800).joinToString("\n", postfix = "\n"))
+                }
+            }
+        }
     }
 
     @Synchronized
     fun clear() {
         buf.clear(); _lines.value = emptyList()
+        file?.let { f -> writer.execute { runCatching { f.delete() } } }
     }
 }
 
@@ -75,6 +99,10 @@ data class ToolOutcome(
     val ask: (suspend (String) -> ToolOutcome)? = null,
     /** Don't speak the message (e.g. music just started — talking would interrupt it). */
     val quiet: Boolean = false,
+    /** [message] is only a fallback: even for a quick command, let the AI answer from [data] (web search). */
+    val preferModel: Boolean = false,
+    /** Shown in the popup as an info line (e.g. which websites were used). */
+    val note: String? = null,
 ) {
     companion object {
         fun ok(msg: String, data: String? = null, needsModel: Boolean = false) = ToolOutcome(msg, data, needsModel)
@@ -89,6 +117,8 @@ data class AgentResult(
     val dismiss: Boolean = false,
     val expectReply: Boolean = false,
     val quiet: Boolean = false,
+    /** An answer from the AI in a back-and-forth (not a finished task) — Nova listens for a follow-up. */
+    val conversational: Boolean = false,
 )
 
 /** One popup conversation; survives re-opening the popup for a few minutes. */

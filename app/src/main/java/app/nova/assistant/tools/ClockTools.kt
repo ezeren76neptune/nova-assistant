@@ -86,6 +86,15 @@ object ClockTools {
             val n = Reminders.cancel(ctx) { it.kind == "timer" && (label == null || it.text.contains(label, ignoreCase = true)) }
             if (n > 0) return ok(if (n == 1) "Timer cancelled." else "Cancelled $n timers.")
         }
+        // the Clock app's running-timer notification has a Reset/Cancel button — press it
+        notif?.pressAction(
+            pkg = { it.contains("clock", ignoreCase = true) },
+            titles = listOf("reset", "cancel", "delete", "remove", "dismiss", "stop").map { Regex("(?i)\\b$it") },
+            tag = Regex("(?i)timer"),
+        )?.let { pressed ->
+            AppLog.d("tool", "cancel_timer pressed \"$pressed\" on the Clock notification")
+            return ok("Timer cancelled.")
+        }
         if (settings[K.timerImpl] != "builtin" && launch(Intent(AlarmClock.ACTION_SHOW_TIMERS))) {
             return ok("I opened your timers in the Clock app — tap stop or delete to cancel it.")
         }

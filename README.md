@@ -57,12 +57,12 @@ Speech recognition for the wake word, the AI model, Voice ID and the device cont
 | **Music** | "play spotify", "play jazz", "play daft punk", "play my workout playlist", "play bohemian rhapsody on spotify", "play lofi on youtube" |
 | **Phone settings** | "turn on wifi", "bluetooth off", "airplane mode on", "turn on the flashlight", "brightness to 30%", "dim the screen", "do not disturb on", "put my phone on vibrate", "dark mode on", "open battery settings" |
 | **Screen** | "what's on my screen?", "summarize this page", "tap sign in", "type hello there", "scroll down", "go back", "go home", "lock the phone", "take a screenshot" |
-| **Apps & web** | "open spotify", "search for best pizza near me", "go to wikipedia.org", "navigate to the airport", "walking directions to the park", "coffee near me", "take a selfie" |
+| **Apps & web** | "search how long a filling takes to heal" (Nova reads the results and tells you), "open it", "open a search for best pizza near me", "go to wikipedia.org", "navigate to the airport", "walking directions to the park", "coffee near me", "take a selfie" |
 | **Info** | "what time is it", "what's the date", "what's 15% of 80", "weather tomorrow", "will it rain this weekend", "where am I", "what's next on my calendar", "what's on my calendar today", "add dentist Friday at 3pm", "how much battery do my AirPods have" |
 | **Your stuff** | "directions to my dentist appointment", "what time is the party Sam texted about", "what was that code from the bank" (via the personal index) |
 | **Smart home** | "open the garage", "turn off the kitchen light", "set the bedroom light to 40%", "set the thermostat to 70", "run movie night", "lock the front door", "is the humidity switch on?", "turn off the living room lights" (passed to Home Assistant Assist) |
 | **Memory** | "remember my locker code is 4312", "what do you remember about me", "forget the locker code", "take a note buy milk", "read my notes" |
-| **Anything else** | Questions, explanations, writing, translations, follow-ups: the on-device model answers them and keeps the conversation going while the popup is open |
+| **Anything else** | Questions, explanations ("go in depth about…", health and dental questions included), writing, translations, follow-ups: the on-device model answers them and keeps the conversation going while the popup is open. If it doesn't know or it's current news, it searches the web itself |
 
 ## How it works
 
@@ -227,14 +227,15 @@ Nova talks to Home Assistant directly through its REST API.
   "Play spotify" on its own resumes your music. If Spotify redesigns its app this may break; Nova then leaves Spotify's search open rather than playing the wrong thing.
 - **No "Open with" pickers.**
   - Music goes to your preferred app automatically: Spotify, YouTube Music, YouTube (including ReVanced builds), Apple Music, Amazon Music, Deezer or Tidal.
-  - Web searches open in your **default browser** with that browser's own search engine. You can choose another engine or app in settings.
+  - When a search does open the browser, it's your **default browser** with that browser's own search engine. You can choose another engine or app in settings.
+- **Web search is answered out loud.** Nova fetches the results itself (Yahoo, falling back to DuckDuckGo and Wikipedia; no API key), reads the top pages, and the AI explains what it found and names the source; the popup shows which sites were used. Say "open it" to see the page. Only the search query leaves the phone. Prefer the browser? Actions & apps → Web search results → *Open them in the browser*, or say "open a search for …".
 - **Opening apps** uses fuzzy name matching with common synonyms ("camera", "dialer", "messages", "maps").
 
 ## The popup
 
 - Slides up over any app as an **accessibility overlay**, so it needs no "display over other apps" permission. On the lock screen it's a full-screen popup that wakes the screen.
 - Shows the live transcript as you speak, the reply as it streams in, and Confirm / Cancel buttons when an action needs approval.
-- The text box takes typed follow-ups. Tap the mic to talk again; Nova also starts listening again on its own when it asks you a question (configurable).
+- The text box takes typed follow-ups. Tap the mic to talk again. **Nova listens for your follow-up by itself** after an AI answer, a question or an offer ("…I can look it up"), but not after it finishes a task like a timer or a volume change (Speech input → Keep listening after a reply).
 - **Closes itself when you're done:** after **5 seconds** with no touch and no speech (any touch restarts the countdown; typing keeps it open), and immediately when it was listening for a follow-up and heard nothing. Adjustable under Popup → Auto-dismiss.
 - **Every new request starts a fresh chat**, and closing the popup clears it. Follow-ups inside the open popup continue the conversation. One exception: right after a volume or brightness change, "set it to 50%" still knows what "it" means.
 - **Closing the popup stops every sound Nova makes:** its voice, listening, and any pending AI reply. That includes leaving the full-screen popup with Home or switching apps.
@@ -274,10 +275,10 @@ Also see [dontkillmyapp.com](https://dontkillmyapp.com).
 |---|---|
 | **Wake word** | Phrase, variants, mode, sensitivity, partial trigger, same-breath commands, cooldown, mic source, beep / vibrate, Voice ID, offline model URL, live test |
 | **Custom words** | Words Nova should hear right: teach by voice, learned corrections (removable), manual corrections, notes for the AI, live tester |
-| **Speech input** | Recognizer (auto / Google / on-device / Vosk), language, prefer offline, silence timeout, max length, follow-up listening (never / after a question / always), pause or duck music, close if nothing was said |
+| **Speech input** | Recognizer (auto / Google / on-device / Vosk), language, prefer offline, silence timeout, max length, follow-up listening (never / after a question or offer / in a conversation (default) / always), pause or duck music, close if nothing was said |
 | **Voice output** | Text-to-speech on/off, only when you spoke, rate, pitch, engine, read reminders aloud |
 | **AI model** | Backend, model file, downloads, import, HF token, remote server, GPU/CPU, context, reply length, sampling, thinking, constrained JSON, prompt format, preload / unload. Behaviour: assistant name, your name, personality, custom instructions, tool steps, summarize tool results, quick commands, internet tools, memory, keep chat after closing |
-| **Actions & apps** | Confirm before calls / texts / messaging apps, direct SMS vs Messages app, auto-press Send, Clock app vs built-in timers, silent alarms, search engine, music app, country code, contact aliases ("mom = Jane Doe"), home/work address, units, auto-shutter, screen-automation tricks |
+| **Actions & apps** | Confirm before calls / texts / messaging apps, direct SMS vs Messages app, auto-press Send, Clock app vs built-in timers, silent alarms, web search results (spoken or browser), browser search engine, music app, country code, contact aliases ("mom = Jane Doe"), home/work address, units, auto-shutter, screen-automation tricks |
 | **Home Assistant** | Address, network discovery, sign-in / token, test, imported widgets, favorites, which devices are exposed, confirmations, Assist fallback |
 | **Tools** | Turn each of the ~60 tools on or off |
 | **Popup** | Overlay vs full screen, auto-dismiss, tap outside to close, show on lock screen, text size, full history, accessibility button |
@@ -350,6 +351,8 @@ adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es dump co
 adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es killllm 1
 # list Home Assistant entities matching a filter
 adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es ha "light."
+# list the buttons on an app's notifications
+adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es notifactions com.android.deskclock
 # re-index the phone, or search the index
 adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es reindex 1
 adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es search "dentist"
