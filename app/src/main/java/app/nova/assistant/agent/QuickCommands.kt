@@ -143,7 +143,7 @@ private class Parser(val app: NovaApp, input: String, val lastTool: String? = nu
 
     fun run(): Q? {
         if (d.isEmpty()) return Q.Say("Yes? How can I help?")
-        return dismiss() ?: followUp() ?: home() ?: timeDate() ?: timers() ?: reminders() ?: alarms() ?: calls() ?: messages() ?: readers()
+        return dismiss() ?: followUp() ?: home() ?: timeDate() ?: timers() ?: reminders() ?: alarms() ?: calls() ?: messages() ?: news() ?: readers()
             ?: flashlight() ?: ringer() ?: volume() ?: media() ?: play() ?: navigation() ?: search() ?: system()
             ?: accessoryBattery() ?: battery() ?: dnd() ?: toggles() ?: brightness() ?: camera() ?: memory() ?: weather() ?: location()
             ?: calendar() ?: listening() ?: screen() ?: calc() ?: open()
@@ -400,7 +400,8 @@ private class Parser(val app: NovaApp, input: String, val lastTool: String? = nu
         rxi("""^(?:text|message|txt|sms|whatsapp|msg)\s+(.+)$""").find(r)?.let { m ->
             val rest = m.g(1)
             split(rest)?.let { (c, msg) -> return send(c, msg) }
-            if (score(cleanName(rest)) >= 0.75f && rest.trim().split(Regex("\\s+")).size <= 3) return send(rest, null)
+            // just a name ("text Sam"): same bar as the contact lookup, then ask what to say
+            if (score(cleanName(rest)) >= 0.6f && rest.trim().split(Regex("\\s+")).size <= 3) return send(rest, null)
             return null
         }
         rxi("""^tell\s+(?!me\b|us\b|a\b|an\b|the\b|you\b|everyone\b|everybody\b|them\b|him\b|her\b)(.+)$""").find(r)?.let { m ->
@@ -654,6 +655,16 @@ private class Parser(val app: NovaApp, input: String, val lastTool: String? = nu
         rxi("""^(?:find|where is|where's|locate)(?: the| a)? (?:nearest|closest) (.+)$""").find(rawT)?.let { return tool("show_map", "query" to "${it.g(1)} near me") }
         rxi("""^(?:show me |open )?(?:the |a )?maps? (?:of|for) (.+)$""").find(rawT)?.let { return tool("show_map", "query" to it.g(1)) }
         return null
+    }
+
+    // ---------- news ----------
+    fun news(): Q? {
+        if (!has("""\b(news|headlines?)\b""") || words() > 12) return null
+        if (has("""\b(play|podcast|app|open|launch|channel|text|message|send|remind|search|google|notification|notifications)\b""")) return null
+        val about = match("""\b(?:news|headlines?)(?: stories| articles| updates)?\s+(?:about|on|regarding|for|from|in)\s+(.+)$""")?.groupValues?.get(1)
+            ?.removePrefix("the ")?.takeIf { it !in setOf("today", "right now", "this morning", "tonight") }
+        val section = match("""\b(world|business|tech|technology|science|health|sports?|entertainment|economy|finance|markets|national|international)\s+(?:news|headlines?)\b""")?.groupValues?.get(1)
+        return tool("news", "topic" to (about ?: section))
     }
 
     fun search(): Q? {

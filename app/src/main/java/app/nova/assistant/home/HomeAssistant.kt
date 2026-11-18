@@ -95,9 +95,31 @@ class HomeAssistant(private val app: NovaApp) {
 
     private fun enc(v: String) = URLEncoder.encode(v, "UTF-8")
 
-    private suspend fun raw(method: String, path: String, body: String?, form: Boolean = false, auth: String?): Pair<Int, String> =
+    /**
+     * Some networks (a VPN, another Wi-Fi's DNS) can't resolve a local name like homeassistant.local even though the
+     * server is reachable. For http:// URLs, fall back to the address the name last resolved to.
+     */
+    private suspend fun raw(method: String, path: String, body: String?, form: Boolean = false, auth: String?): Pair<Int, String> {
+        val base = baseUrl()
+        val host = runCatching { URL(base).host }.getOrNull()
+        try {
+            val r = rawAt(base, method, path, body, form, auth)
+            if (host != null && !host.first().isDigit()) withContext(Dispatchers.IO) {
+                runCatching { java.net.InetAddress.getByName(host).hostAddress }.getOrNull()
+                    ?.takeIf { it != s[K.haLastIp] }?.let { s[K.haLastIp] = it }
+            }
+            return r
+        } catch (e: java.net.UnknownHostException) {
+            val ip = s[K.haLastIp]
+            if (ip.isBlank() || host == null || !base.startsWith("http://")) throw e
+            AppLog.d("ha", "can't resolve $host on this network — trying its last address $ip")
+            return rawAt(base.replaceFirst("://$host", "://$ip"), method, path, body, form, auth)
+        }
+    }
+
+    private suspend fun rawAt(base: String, method: String, path: String, body: String?, form: Boolean, auth: String?): Pair<Int, String> =
         withContext(Dispatchers.IO) {
-            val conn = URL(baseUrl() + path).openConnection() as HttpURLConnection
+            val conn = URL(base + path).openConnection() as HttpURLConnection
             try {
                 conn.requestMethod = method
                 conn.connectTimeout = 8000

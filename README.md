@@ -42,7 +42,7 @@ Speech recognition for the wake word, the AI model, Voice ID and the device cont
 - **Voice ID.** Record your voice once and Nova only wakes up for you. It compares a speaker embedding against your saved voiceprint, offline.
 - **On-device AI.** Nova runs models like Gemma 4, Qwen 3/3.5 and LFM 2.5 on the phone's GPU with Google's [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM). You get one-tap downloads, or you can import your own `.litertlm` / `.task` file, or point it at your own server (Ollama, llama.cpp, LM Studio).
 - **About 60 tools.** Timers, alarms, reminders, calls, texts, WhatsApp, notification replies, volume, brightness, Wi-Fi/Bluetooth/airplane mode, apps, music, maps, web search, calendar, weather, screen reading and tapping, screenshots, memory, notes, and Home Assistant.
-- **Instant quick commands.** Common requests ("set a timer for 10 minutes", "volume to 40%", "call mom") are understood without waiting for the AI, so they're instant and work even with no model installed.
+- **Instant quick commands.** Common requests ("set a timer for 10 minutes", "volume to 40%", "call mom") are understood without waiting for the AI, so they're instant and work even with no model installed. Two at once works too: "turn on the flashlight and play Spotify".
 - **Home Assistant built in.** Sign in once. The devices behind your Home Assistant home-screen widgets become Nova's main devices. Opening doors or unlocking asks you to confirm first.
 - **Uses every Android hook it can.** It runs as an accessibility service, as a foreground microphone service with a persistent notification, and as the default digital assistant (long-press home / corner swipe). It also offers Quick Settings tiles, a launcher shortcut and the headset button.
 
@@ -51,14 +51,14 @@ Speech recognition for the wake word, the AI model, Voice ID and the device cont
 | Area | Examples |
 |---|---|
 | **Clock** | "set a timer for 10 minutes", "pasta timer for 8 minutes", "how much time is left", "wake me up at 6:30", "set an alarm for 7 every weekday", "cancel my 7am alarm", "when's my next alarm", "remind me to call mom tomorrow at 5" |
-| **Calls & messages** | "call mom", "call back", "who called me", "text Sam I'm running late", "send a WhatsApp to Alex saying on my way", "read my texts", "email Jordan about the meeting" |
+| **Calls & messages** | "call mom", "call back", "who called me", "text Sam I'm running late", "send a WhatsApp to Alex saying on my way", "read my texts", "read me the texts from Sam" (SMS and MMS, including group chats and photo messages), "text Sam" (asks what to say), "email Jordan about the meeting" |
 | **Notifications** | "read my notifications", "reply to Jane saying sounds good" (works in any app that has a reply button), "clear my notifications" |
 | **Volume & media** | "volume up", "turn it down a little", "set the volume to 30", "set it to 50%" (right after a volume change), "ringer volume to 40", "mute", "pause the music", "next song", "what song is this" |
 | **Music** | "play spotify", "play jazz", "play daft punk", "play my workout playlist", "play bohemian rhapsody on spotify", "play lofi on youtube" |
 | **Phone settings** | "turn on wifi", "bluetooth off", "airplane mode on", "turn on the flashlight", "brightness to 30%", "dim the screen", "do not disturb on", "put my phone on vibrate", "dark mode on", "open battery settings" |
 | **Screen** | "what's on my screen?", "summarize this page", "tap sign in", "type hello there", "scroll down", "go back", "go home", "lock the phone", "take a screenshot" |
 | **Apps & web** | "search how long a filling takes to heal" (Nova reads the results and tells you), "open it", "open a search for best pizza near me", "go to wikipedia.org", "navigate to the airport", "walking directions to the park", "coffee near me", "take a selfie" |
-| **Info** | "what time is it", "what's the date", "what's 15% of 80", "weather tomorrow", "will it rain this weekend", "where am I", "what's next on my calendar", "what's on my calendar today", "add dentist Friday at 3pm", "how much battery do my AirPods have" |
+| **Info** | "what time is it", "what's the date", "what's 15% of 80", "weather tomorrow", "will it rain this weekend", "where am I", "what's next on my calendar", "what's on my calendar today", "add dentist Friday at 3pm", "how much battery do my AirPods have", "tell me the news", "sports news", "news about the election" (headlines from Google News, summarized out loud) |
 | **Your stuff** | "directions to my dentist appointment", "what time is the party Sam texted about", "what was that code from the bank" (via the personal index) |
 | **Smart home** | "open the garage", "turn off the kitchen light", "set the bedroom light to 40%", "set the thermostat to 70", "run movie night", "lock the front door", "is the humidity switch on?", "turn off the living room lights" (passed to Home Assistant Assist) |
 | **Memory** | "remember my locker code is 4312", "what do you remember about me", "forget the locker code", "take a note buy milk", "read my notes" |
@@ -173,7 +173,7 @@ Voice ID is a convenience filter, not a lock: a recording of you can pass it. Th
 ## Personal index
 
 Nova keeps a private, on-device index so it can answer about *your* stuff without thinking it through step by step, a bit like Siri's personal context:
-- **What's searched:** the last 30 days of notifications, captured as they arrive (they'd otherwise vanish when dismissed); your text messages (last 90 days); and your calendar (past week and next two months). Texts and calendar are snapshotted and refreshed every 10 minutes, so lookups stay fast.
+- **What's searched:** the last 30 days of notifications, captured as they arrive (they'd otherwise vanish when dismissed); your text messages from the last 90 days (plain SMS, plus the latest 500 MMS messages, which is where group chats and photo messages live; RCS chats are private to the Messages app); and your calendar (past week and next two months). Texts and calendar are snapshotted and refreshed every 10 minutes, so lookups stay fast.
 - **Index phone now:** Settings → Memory → *Index phone now* re-reads everything on demand (including what's in the notification shade) and shows exactly what was found, in Notifications / Texts / Calendar tabs. If a permission is missing, the tab says so instead of looking empty. Turn off *Remember notifications in the background* to save notifications only when you tap the button.
 - **Notification index:** a list of every saved notification with an ✕ to delete each one, or *Clear all*.
 - **Automatic context:** each request is matched against the index with a fast keyword search, no AI call. The best hits go to the AI with your question ("possibly relevant: text from the dental office, *your appointment Tue 3 PM at 123 Main St*").
@@ -314,6 +314,7 @@ Also see [dontkillmyapp.com](https://dontkillmyapp.com).
 | "Open with" picker appears | Choose a default in Actions & apps (music app, search engine), or set a default browser in Android. |
 | Spotify opens but plays the wrong thing | Make sure the accessibility service and "screen automation tricks" are on. Spotify UI changes can break this; please open an issue. |
 | Home Assistant sign-in fails | Use the address your phone can reach (try `http://<ip>:8123`). For `https` with your own CA, install the CA in Android's settings first. |
+| Home Assistant unreachable away from home Wi-Fi or on a VPN | With an `http://` address, Nova remembers the IP the name last resolved to and retries with it when the network's DNS can't find the name. Otherwise use an address that works everywhere (Nabu Casa, a VPN with DNS). |
 | Volume jumps to 100% / ignores levels | Fixed: Nova steps the volume like the volume keys and checks the real level, because some phones ignore apps setting it directly. |
 | AI replies are slow | Use a smaller or GPU model, lower the context size, and keep *Preload on wake* on. |
 
@@ -353,6 +354,8 @@ adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es killllm
 adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es ha "light."
 # list the buttons on an app's notifications
 adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es notifactions com.android.deskclock
+# show how a request would be understood (quick command, "do X and Y", or the AI), without running it
+adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es parse "\"turn on the flashlight and play spotify\""
 # re-index the phone, or search the index
 adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es reindex 1
 adb shell am broadcast -n app.nova.assistant/.service.DebugReceiver --es search "dentist"

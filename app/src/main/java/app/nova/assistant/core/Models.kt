@@ -132,4 +132,8 @@ class Conversation {
     /** Last tool that ran — lets follow-ups like "set it to 50%" or "a bit more" target the same thing. */
     var lastTool: String? = null
     var lastActive = System.currentTimeMillis()
+    /** Nova's last reply was a question, so the next input is probably its answer. */
+    var askedQuestion = false
+    /** The rest of a "do X and Y" waiting for a confirmation of X. */
+    val queued = mutableListOf<String>()
 }

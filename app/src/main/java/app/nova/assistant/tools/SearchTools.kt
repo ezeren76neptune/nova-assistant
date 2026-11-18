@@ -13,5 +13,6 @@ object SearchTools {
             if (hits.isEmpty()) return@Tool ok("I didn't find anything about \"$q\" in your notifications, texts or calendar.", needsModel = true)
             ok(hits.first().line(), data = hits.joinToString("\n") { it.line() }, needsModel = true)
         },
+        News.tool,
     )
 }

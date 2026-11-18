@@ -1,5 +1,6 @@
 package app.nova.assistant.service
 
+import app.nova.assistant.agent.QuickCommands
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -38,6 +39,13 @@ class DebugReceiver : BroadcastReceiver() {
             return
         }
         intent.getStringExtra("delword")?.let { context.app.customWords.remove(it); out("custom word removed: $it"); return }
+        intent.getStringExtra("parse")?.let { q ->
+            // how a request would be understood, without running anything
+            val app = context.app
+            val plan = app.agent.compoundPlan(q)
+            out("parse \"$q\": " + (plan?.let { "compound ${it.second}" } ?: "${QuickCommands.parse(q, app) ?: "→ AI model"}"))
+            return
+        }
         intent.getStringExtra("notifactions")?.let { pkg ->
             out("actions for $pkg: " + (NotificationWatcher.instance?.actionTitles(pkg) ?: "listener off"))
             return

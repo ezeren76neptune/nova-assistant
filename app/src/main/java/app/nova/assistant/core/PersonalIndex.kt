@@ -8,6 +8,7 @@ import android.provider.CalendarContract
 import androidx.core.content.ContextCompat
 import app.nova.assistant.NovaApp
 import app.nova.assistant.tools.Contacts
+import app.nova.assistant.tools.Messages
 import app.nova.assistant.service.NotificationWatcher
 import org.json.JSONObject
 import java.io.File
@@ -121,10 +122,21 @@ class PersonalIndex(private val app: NovaApp) {
         return r
     }
 
-    /** Texts + calendar from the last snapshot (refreshed when older than 10 minutes) — fast lookups. */
+    private val refreshing = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Texts + calendar from the last snapshot — fast lookups. The first time it's read right away; after that a
+     * snapshot older than 10 minutes is refreshed in the background so no request waits for it.
+     */
     private fun snapshot(): List<Item> {
-        if (snapTexts == null || System.currentTimeMillis() - snapAt > 10 * 60_000L) {
+        if (snapTexts == null) {
             snapTexts = texts(); snapEvents = calendar(); snapAt = System.currentTimeMillis()
+        } else if (System.currentTimeMillis() - snapAt > 10 * 60_000L && refreshing.compareAndSet(false, true)) {
+            Thread({
+                try { val t = texts(); val e = calendar(); snapTexts = t; snapEvents = e; snapAt = System.currentTimeMillis() }
+                catch (t: Throwable) { AppLog.d("index", "refresh failed", t) }
+                finally { refreshing.set(false) }
+            }, "index-refresh").start()
         }
         return snapTexts.orEmpty() + snapEvents.orEmpty()
     }
@@ -140,24 +152,14 @@ class PersonalIndex(private val app: NovaApp) {
 
     private fun has(p: String) = ContextCompat.checkSelfPermission(app, p) == PackageManager.PERMISSION_GRANTED
 
-    private fun texts(limit: Int = 400): List<Item> {
+    private fun texts(): List<Item> {
         if (!has(Manifest.permission.READ_SMS)) return emptyList()
-        val out = ArrayList<Item>()
-        val since = System.currentTimeMillis() - 90 * 86_400_000L
-        runCatching {
-            app.contentResolver.query(
-                Uri.parse("content://sms"), arrayOf("address", "body", "date", "type"),
-                "date > ?", arrayOf(since.toString()), "date DESC",
-            )?.use { c ->
-                while (c.moveToNext() && out.size < limit) {
-                    val addr = c.getString(0) ?: ""
-                    val who = runCatching { Contacts.nameForNumber(app, addr) }.getOrNull() ?: addr
-                    val sent = c.getInt(3) == 2
-                    out += Item("sms", if (sent) "to $who" else "from $who", c.getString(1) ?: "", c.getLong(2))
-                }
-            }
-        }
-        return out
+        val names = HashMap<String, String>()
+        // plain SMS (appointment reminders, codes, 1:1 texts) go back further; busy MMS group chats only the latest
+        return Messages.recent(app, System.currentTimeMillis() - 90 * 86_400_000L, 1500, smsLimit = 1000, mmsLimit = 500).map { m ->
+            val who = names.getOrPut(m.address) { runCatching { Contacts.nameForNumber(app, m.address) }.getOrNull() ?: m.address }
+            Item("sms", (if (m.sent) "to $who" else "from $who") + if (m.group) " (group chat)" else "", m.text(), m.date)
+        }.filter { it.text.isNotBlank() }
     }
 
     private fun calendar(): List<Item> {

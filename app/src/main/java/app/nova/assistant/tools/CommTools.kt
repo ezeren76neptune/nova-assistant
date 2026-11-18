@@ -430,33 +430,28 @@ object CommTools {
                 ContactResult.NotFound -> return fail("I couldn't find $who in your contacts.")
             }
         }
-        data class Sms(val name: String, val body: String, val date: Long, val read: Boolean)
-        val items = mutableListOf<Sms>()
         val names = HashMap<String, String>()
-        try {
-            ctx.contentResolver.query(
-                Uri.parse("content://sms/inbox"), arrayOf("address", "body", "date", "read"), null, null, "date DESC",
-            )?.use { c ->
-                var scanned = 0
-                while (c.moveToNext() && items.size < count && scanned++ < 500) {
-                    val addr = c.getString(0) ?: continue
-                    val digits = addr.filter { it.isDigit() }
-                    if (filterDigits != null && !digits.endsWith(filterDigits)) continue
-                    if (filterDigits == null && filterName != null) {
-                        val n = names.getOrPut(addr) { Contacts.nameForNumber(ctx, addr) ?: addr }
-                        if (!n.contains(filterName, ignoreCase = true)) continue
-                    }
-                    val name = names.getOrPut(addr) { Contacts.nameForNumber(ctx, addr) ?: addr }
-                    items += Sms(name, c.getString(1) ?: "", c.getLong(2), c.getInt(3) != 0)
+        fun nameOf(addr: String) = names.getOrPut(addr) { Contacts.nameForNumber(ctx, addr) ?: addr }
+        val items = try {
+            // SMS and MMS (group chats and messages with photos are MMS) from the last 90 days
+            Messages.recent(ctx, System.currentTimeMillis() - 90 * 86_400_000L, count, incomingOnly = true) { addr ->
+                when {
+                    filterDigits != null -> addr.filter { it.isDigit() }.endsWith(filterDigits!!)
+                    filterName != null -> nameOf(addr).contains(filterName!!, ignoreCase = true)
+                    else -> true
                 }
             }
         } catch (t: Throwable) {
-            AppLog.d("comm", "sms query failed", t)
+            AppLog.d("comm", "message query failed", t)
             return fail("I couldn't read your messages.")
         }
-        if (items.isEmpty()) return ok(if (filterName != null) "No messages from $filterName." else "You don't have any text messages.")
-        val spoken = items.take(3).joinToString(" ") { "From ${firstName(it.name)} ${whenText(it.date)}: ${it.body.take(160)}." }
-        val data = items.joinToString("\n") { "${it.name} (${Fmt.dateTime(ctx, it.date)}${if (!it.read) ", unread" else ""}): ${it.body}" }
+        if (items.isEmpty()) return ok(if (filterName != null) "No messages from $filterName in the last 90 days." else "You don't have any text messages.")
+        val spoken = items.take(3).joinToString(" ") {
+            "From ${firstName(nameOf(it.address))}${if (it.group) " in a group chat" else ""} ${whenText(it.date)}: ${it.text().take(160).trimEnd('.', ' ')}."
+        }
+        val data = items.joinToString("\n") {
+            "${nameOf(it.address)}${if (it.group) " (group chat)" else ""} (${Fmt.dateTime(ctx, it.date)}${if (!it.read) ", unread" else ""}): ${it.text()}"
+        }
         return ok(spoken, data = data, needsModel = true)
     }
 

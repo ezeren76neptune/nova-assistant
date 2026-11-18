@@ -125,6 +125,7 @@ object K {
 
     // Home Assistant
     val haUrl = StrPref("ha_url", "")
+    val haLastIp = StrPref("ha_last_ip", "")            // address the HA host name last resolved to (DNS fallback)
     val haToken = StrPref("ha_token", "")                  // optional long-lived access token
     val haRefreshToken = StrPref("ha_refresh_token", "")   // from in-app sign-in
     val haAccessToken = StrPref("ha_access_token", "")

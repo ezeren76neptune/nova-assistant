@@ -2,6 +2,7 @@ package app.nova.assistant.tools
 
 import app.nova.assistant.core.AppLog
 import app.nova.assistant.core.TextNorm
+import app.nova.assistant.core.ToolOutcome
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -193,5 +194,78 @@ object WebSearch {
             e.startsWith("#") -> e.substring(1).toIntOrNull()?.let { runCatching { String(Character.toChars(it)) }.getOrNull() }
             else -> NAMED[e]
         } ?: m.value
+    }
+}
+
+/** Headlines from Google News' public RSS feeds (top stories, a topic, or a search). No account or key. */
+object News {
+    data class Story(val title: String, val source: String, val time: Long, val url: String, val related: List<String>)
+
+    @Volatile var last: List<Story> = emptyList()
+
+    private val TOPICS = mapOf(
+        "world" to "WORLD", "international" to "WORLD", "nation" to "NATION", "national" to "NATION", "us" to "NATION", "u.s." to "NATION",
+        "business" to "BUSINESS", "economy" to "BUSINESS", "money" to "BUSINESS", "finance" to "BUSINESS", "markets" to "BUSINESS",
+        "tech" to "TECHNOLOGY", "technology" to "TECHNOLOGY", "science" to "SCIENCE", "health" to "HEALTH",
+        "sports" to "SPORTS", "sport" to "SPORTS", "entertainment" to "ENTERTAINMENT", "movies" to "ENTERTAINMENT",
+    )
+
+    suspend fun fetch(topic: String?): List<Story> = withContext(Dispatchers.IO) {
+        val loc = Locale.getDefault()
+        val hl = loc.toLanguageTag().ifBlank { "en-US" }
+        val gl = loc.country.ifBlank { "US" }
+        val ceid = "$gl:${loc.language.ifBlank { "en" }}"
+        val t = topic?.trim()?.lowercase()?.removeSuffix(" news")?.takeIf { it.isNotBlank() && it !in setOf("latest", "recent", "top", "today", "todays", "today's", "the", "breaking") }
+        val url = when {
+            t == null -> "https://news.google.com/rss?hl=$hl&gl=$gl&ceid=$ceid"
+            TOPICS[t] != null -> "https://news.google.com/rss/headlines/section/topic/${TOPICS[t]}?hl=$hl&gl=$gl&ceid=$ceid"
+            else -> "https://news.google.com/rss/search?q=${URLEncoder.encode("$t when:7d", "UTF-8")}&hl=$hl&gl=$gl&ceid=$ceid"
+        }
+        val xml = WebSearch.get(url, ua = "NovaAssistant/1.0 (Android voice assistant)") ?: return@withContext emptyList()
+        val fmt = java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US)
+        Regex("(?s)<item>(.*?)</item>").findAll(xml).mapNotNull { m ->
+            val it = m.groupValues[1]
+            fun tag(n: String) = Regex("(?s)<$n[^>]*>(.*?)</$n>").find(it)?.groupValues?.get(1)?.let { v -> clean(v) }
+            val source = tag("source").orEmpty()
+            val title = tag("title")?.removeSuffix(" - $source")?.trim() ?: return@mapNotNull null
+            val time = runCatching { fmt.parse(tag("pubDate").orEmpty())!!.time }.getOrDefault(0L)
+            // the description lists other outlets' headlines on the same story — extra detail for the summary
+            val related = Regex("(?s)<a [^>]*>(.*?)</a>").findAll(clean(Regex("(?s)<description>(.*?)</description>").find(it)?.groupValues?.get(1).orEmpty(), keepTags = true))
+                .map { r -> clean(r.groupValues[1]) }.filter { r -> r.isNotBlank() && !r.equals(title, true) }.take(2).toList()
+            Story(title, source, time, tag("link").orEmpty(), related)
+        }.take(10).toList().also { last = it; AppLog.d("web", "news (${t ?: "top"}): ${it.size} stories") }
+    }
+
+    fun forModel(stories: List<Story>, topic: String?): String = buildString {
+        append(if (topic.isNullOrBlank()) "Top news headlines right now:\n" else "News about $topic:\n")
+        val now = System.currentTimeMillis()
+        stories.forEachIndexed { i, s ->
+            val age = if (s.time > 0) ((now - s.time) / 3_600_000L).let { h -> if (h < 1) "just now" else if (h < 48) "${h}h ago" else "${h / 24}d ago" } else ""
+            append(i + 1).append(". ").append(s.title).append(" (").append(s.source).append(if (age.isNotEmpty()) ", $age" else "").append(")")
+            if (s.related.isNotEmpty()) append(" — also: ").append(s.related.joinToString("; "))
+            append('\n')
+        }
+    }.take(3000)
+
+    private fun clean(v: String, keepTags: Boolean = false): String {
+        var s = v.replace("<![CDATA[", "").replace("]]>", "")
+        s = s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&nbsp;", " ").replace("&amp;", "&")
+        if (!keepTags) s = s.replace(Regex("<[^>]+>"), " ")
+        return s.replace(Regex("\\s+"), " ").trim()
+    }
+
+    val tool = Tool(
+        "news", "topic?:str e.g. world, business, tech, sports, or any subject",
+        "Current news headlines (top stories, a section, or news about something). Use this for any news request",
+        "Info", "Getting the news…",
+    ) { a ->
+        val topic = a.str("topic", "query", "about", "subject", "category")
+        val stories = News.fetch(topic)
+        if (stories.isEmpty()) return@Tool fail("I couldn't get the news right now.")
+        val plain = "Here are the top stories: " + stories.take(3).joinToString(". ") { "${it.title}, from ${it.source}" } + "."
+        ToolOutcome(
+            plain, data = forModel(stories, topic) + "\nTell the user the 4 or 5 most important stories in a few natural spoken sentences (what happened, not just the outlet names).",
+            needsModel = true, preferModel = true, note = "Headlines from Google News",
+        )
     }
 }

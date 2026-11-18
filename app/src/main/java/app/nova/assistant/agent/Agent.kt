@@ -32,7 +32,13 @@ interface AgentUi {
 class Agent(private val app: NovaApp) {
     private val s get() = app.settings
 
-    suspend fun handle(input: String, conv: Conversation, ui: AgentUi): AgentResult {
+    suspend fun handle(input: String, conv: Conversation, ui: AgentUi): AgentResult =
+        handleInner(input, conv, ui).also { r ->
+            // remembered so an answer to Nova's own question isn't treated as a new lookup
+            conv.askedQuestion = r.expectReply || r.pending != null || r.reply.trimEnd().endsWith("?")
+        }
+
+    private suspend fun handleInner(input: String, conv: Conversation, ui: AgentUi): AgentResult {
         conv.pending?.let { p ->
             when (yesNo(input)) {
                 true -> {
@@ -40,10 +46,17 @@ class Agent(private val app: NovaApp) {
                     ui.status("Working…")
                     val o = runPending(p)
                     conv.carryOver += "[The user confirmed: ${p.question} → ${o.message}]"
-                    return fromOutcome(o, conv, ui)
+                    val r = fromOutcome(o, conv, ui)
+                    // the rest of a "do X and Y" that was waiting on this confirmation
+                    val rest = conv.queued.toList().also { conv.queued.clear() }
+                    if (rest.isNotEmpty() && r.pending == null && !r.expectReply) {
+                        runParts(rest, conv, ui)?.let { more -> return more.copy(reply = listOf(r.reply, more.reply).filter { it.isNotBlank() }.joinToString(" "), dismiss = r.dismiss || more.dismiss) }
+                    }
+                    return r
                 }
                 false -> {
                     conv.pending = null
+                    conv.queued.clear()
                     conv.carryOver += "[The user cancelled: ${p.question}]"
                     return AgentResult("Okay, cancelled.")
                 }
@@ -55,6 +68,7 @@ class Agent(private val app: NovaApp) {
             return a(input)
         }
         if (s[K.quickCommands]) {
+            compound(input, conv, ui)?.let { return it }
             val q = QuickCommands.parse(input, app, conv.lastTool)
             if (q != null) {
                 AppLog.d("agent", "quick: $q")
@@ -62,6 +76,48 @@ class Agent(private val app: NovaApp) {
             }
         }
         return llm(input, conv, ui)
+    }
+
+    /**
+     * "Turn on the flashlight and play Spotify": when every part is a quick command on its own, run them all.
+     * (Otherwise "and" is probably part of one request — "text mom I love you and miss you" — and is left alone.)
+     */
+    private suspend fun compound(input: String, conv: Conversation, ui: AgentUi): AgentResult? {
+        val (parts, qs) = compoundPlan(input, conv.lastTool) ?: return null
+        AppLog.d("agent", "compound: ${qs.joinToString(" + ")}")
+        return runParts(parts, conv, ui, qs)
+    }
+
+    /** The parts of a "do X and Y" request and their quick commands, or null if it isn't one. */
+    fun compoundPlan(input: String, lastTool: String? = null): Pair<List<String>, List<Q>>? {
+        if (!Regex("(?i)\\b(and|then)\\b").containsMatchIn(input)) return null
+        val parts = input.split(Regex("(?i)\\s*,?\\s*\\b(?:and then|and also|and|then)\\b\\s*")).map { it.trim(' ', ',', '.') }.filter { it.isNotEmpty() }
+        if (parts.size !in 2..4) return null
+        val qs = parts.map { QuickCommands.parse(it, app, lastTool) ?: return null }
+        if (qs.any { it is Q.Ask || (it is Q.Say && it.dismiss) }) return null
+        return parts to qs
+    }
+
+    private suspend fun runParts(parts: List<String>, conv: Conversation, ui: AgentUi, parsed: List<Q>? = null): AgentResult? {
+        val replies = mutableListOf<String>()
+        var dismiss = false
+        var quiet = false
+        var error = false
+        for ((i, part) in parts.withIndex()) {
+            val q = parsed?.getOrNull(i) ?: QuickCommands.parse(part, app, conv.lastTool) ?: continue
+            val r = runQuick(q, part, conv, ui) ?: continue
+            if (r.pending != null || r.expectReply) {
+                // needs an answer first (e.g. "send this text?"): ask, and do the rest afterwards
+                conv.queued += parts.drop(i + 1)
+                return r.copy(reply = (replies + r.reply).filter { it.isNotBlank() }.joinToString(" "))
+            }
+            if (r.reply.isNotBlank()) replies += r.reply
+            dismiss = dismiss || r.dismiss
+            quiet = quiet || r.quiet
+            error = error || r.error
+        }
+        if (replies.isEmpty() && !dismiss) return null
+        return AgentResult(replies.joinToString(" "), dismiss = dismiss, quiet = quiet, error = error && replies.size == 1)
     }
 
     private suspend fun runPending(p: Pending): ToolOutcome = try {
@@ -131,7 +187,8 @@ class Agent(private val app: NovaApp) {
         }
         ui.status(if (app.llm.isReady()) "Thinking…" else "Loading model…")
         // personal context (notifications, texts, calendar) found by a fast local search — saves tool round-trips
-        val found = app.index.contextFor(input)
+        // not when the user is answering Nova's own question ("what should the text say?" → "my teeth hurt")
+        val found = if (conv.askedQuestion) emptyList() else app.index.contextFor(input)
         if (found.isNotEmpty()) {
             AppLog.d("agent", "context: ${found.size} item(s) from the phone")
             ui.found(found.map { it.line() })
@@ -260,8 +317,11 @@ object Prompt {
                 - Don't repeat a tool call that already succeeded. Lines in [brackets] are things that already happened.
                 - For questions you can answer yourself (facts, advice, writing, math explanations), just "say" the answer.
                 - You can explain any topic, including health, medical and dental procedures, medicines, law and money, clearly like a knowledgeable friend. Never refuse with "I can't give medical advice" or "I'm not a medical professional" — even when they ask for advice, give practical general guidance, then at most one short line about when to see a doctor or dentist.
-                - If you don't know, or it needs current information (news, scores, prices, opening hours, recent events), call web_search right away instead of offering to. Then explain the TOOL_RESULT in your own words and name the site it came from. Only pass open=true if the user asks to see the page or browser.
+                - You CAN look things up: never say you can't. For news and headlines use the news tool. If you don't know, or it needs current information (scores, prices, opening hours, recent events), call web_search right away instead of offering to. Then explain the TOOL_RESULT in your own words and name the site it came from. Only pass open=true if the user asks to see the page or browser.
                 - When the user refers to something personal ("my appointment", "the restaurant Sam texted", "my package"), use the [Possibly relevant] lines if present, or search_phone / calendar_events, to find the details (address, time) before acting. For directions, call navigate with the actual address you found.
+                - For suggestions (what to make for dinner, what to watch, gift or activity ideas), give 2-3 concrete ideas right away; don't ask what they're in the mood for first.
+                - When you asked a question (like what a text should say), the user's next words are the answer: use them (e.g. as the message) instead of treating them as a new request.
+                - If the words clearly aren't meant for you (overheard conversation, a random fragment like "there was no way that it made sense"), call end_conversation instead of asking what they mean.
                 - The user's words come from speech recognition and may contain sound-alike mistakes ("cavity feeling" = cavity filling, "clawed" = Claude). Answer what they most likely meant; only ask if it's genuinely unclear.
 
                 TOOLS:
